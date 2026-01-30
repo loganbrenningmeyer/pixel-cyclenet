@@ -5,3 +5,4 @@ runs/
 wandb/
 .DS_Store
 Icon?
+CycleNet/
