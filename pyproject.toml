@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pixel-cyclenet"
+version = "0.1.0"
+description = "Pixel-level CycleNet implementation."
+readme = "README.md"
+license = "MIT"
+
+dependencies = [
+    "numpy",
+    "tqdm",
+    "omegaconf",
+    "wandb",
+    "moviepy",
+    "imageio"
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]

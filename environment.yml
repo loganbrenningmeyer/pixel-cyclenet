@@ -1,0 +1,19 @@
+name: pixel-cyclenet
+channels:
+  - pytorch
+  - nvidia
+  - conda-forge
+  - defaults
+
+dependencies:
+  - python=3.10
+  - pip
+  - setuptools
+  - wheel
+  - pyyaml
+  - pytorch
+  - torchvision
+  - pytorch-cuda=12.1
+  
+  - pip:
+    - -e .

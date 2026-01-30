@@ -1,0 +1,7 @@
+__pycache__/
+*.egg-info/
+datasets/
+runs/
+wandb/
+.DS_Store
+Icon?
