@@ -1,7 +1,8 @@
 import torch
 import torch.nn as nn
 
-from cyclenet.models.blocks import ResBlock, TransformerBlock
+from .attention import TransformerBlock
+from .resblock import ResBlock
 
 
 class Bottleneck(nn.Module):

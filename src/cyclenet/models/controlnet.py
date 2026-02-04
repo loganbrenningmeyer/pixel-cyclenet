@@ -2,10 +2,10 @@ import copy
 import torch
 import torch.nn as nn
 
-from cyclenet.models import UNet
-from cyclenet.models.blocks import ZeroConvBlock
-from cyclenet.models.conditioning import sinusoidal_embedding
-from cyclenet.models.utils import zero_module
+from .unet import UNet
+from .blocks import ZeroConvBlock
+from .conditioning import sinusoidal_embedding
+from .utils import zero_module
 
 
 class ControlNet(nn.Module):

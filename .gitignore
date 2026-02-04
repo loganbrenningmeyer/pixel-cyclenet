@@ -6,3 +6,6 @@ wandb/
 .DS_Store
 Icon?
 CycleNet/
+data/fashion/
+data/mnist/
+torch_datasets/

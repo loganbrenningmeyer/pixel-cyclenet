@@ -1,8 +1,8 @@
 import torch
 import torch.nn as nn
 
-from cyclenet.models.blocks import FFNBlock
-from cyclenet.models.utils import zero_module
+from .ffn import FFNBlock
+from ..utils import zero_module
 
 
 class SelfAttentionBlock(nn.Module):

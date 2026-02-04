@@ -2,6 +2,7 @@ import os
 import copy
 import argparse
 import torch
+import wandb
 from pathlib import Path
 from torch.utils.data import DataLoader
 from omegaconf import OmegaConf, DictConfig
@@ -20,6 +21,25 @@ def load_config(config_path: str) -> DictConfig:
 
 def save_config(config: DictConfig, save_path: str):
     OmegaConf.save(config, save_path)
+
+
+def init_wandb(run_name: str):
+    """
+    Initializes wandb for logging, runs in offline mode on failure  
+    """
+    try:
+        wandb.init(
+            name=run_name,
+            project=os.environ.get("WANDB_PROJECT", "unet"), 
+            entity=os.environ.get("WANDB_ENTITY", None)
+        )
+    except Exception as e:
+        # -- Use offline if init fails
+        print(f"---- wandb.init() failed, running offline: {e}")
+        wandb.init(
+            name=run_name,
+            mode='offline'
+        )
 
 
 def main():
@@ -45,7 +65,7 @@ def main():
     # -------------------------
     src_dir, tgt_dir = config.data.src_dir, config.data.tgt_dir
 
-    dataset = UNetDataset(src_dir, tgt_dir)
+    dataset = UNetDataset(src_dir, tgt_dir, image_size=32)
 
     dataloader = DataLoader(
         dataset,
@@ -126,6 +146,11 @@ def main():
         lr=config.train.lr,
         weight_decay=config.train.weight_decay
     )
+
+    # -------------------------
+    # Initialize wandb logging
+    # -------------------------
+    init_wandb(config.run.name)
 
     # -------------------------
     # Create UNetTrainer / run training

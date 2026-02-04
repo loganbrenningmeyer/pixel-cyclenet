@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 
-from cyclenet.models.utils import zero_module
+from ..utils import zero_module
 
 
 class ResBlock(nn.Module):

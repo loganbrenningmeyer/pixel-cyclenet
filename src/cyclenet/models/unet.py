@@ -2,8 +2,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from cyclenet.models.conditioning import DomainEmbedding, sinusoidal_embedding
-from cyclenet.models.blocks import EncoderBlock, DecoderBlock, Bottleneck, FinalLayer
+from .conditioning import DomainEmbedding, sinusoidal_embedding
+from .blocks import EncoderBlock, DecoderBlock, Bottleneck, FinalLayer
 
 
 class UNet(nn.Module):
@@ -116,10 +116,12 @@ class UNet(nn.Module):
             is_up = i != len(ch_mults) - 1
             # -- Define out_ch
             out_ch = base_ch * ch_mult
-            # -- Pop DecoderBlock skip channels (n_res at deepest level, n_res + 1 otherwise)
+            # -- Pop DecoderBlock skip channels
+            #    Keep post-downsample skips; they should be consumed at the same (lower) resolution.
+            #    Therefore all but the highest-resolution block use n_res + 1.
             num_skips = (
-                num_res_blocks if i == 0 else num_res_blocks + 1
-            )  # encoder n_res + 1 on downscale, n_res if not (deepest block)
+                num_res_blocks if i == len(ch_mults) - 1 else num_res_blocks + 1
+            )
             dec_skip_chs = [skip_chs.pop() for _ in range(num_skips)]
             # -- Initialize DecoderBlock
             self.decoder.append(

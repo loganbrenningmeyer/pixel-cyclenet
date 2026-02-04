@@ -1,8 +1,9 @@
 import torch
 import torch.nn as nn
 
-from cyclenet.models import UNet, ControlNet
-from cyclenet.models.conditioning import DomainEmbedding, sinusoidal_embedding
+from .controlnet import ControlNet
+from .unet import UNet
+from .conditioning import DomainEmbedding, sinusoidal_embedding
 
 
 class CycleNet(nn.Module):
@@ -99,4 +100,3 @@ class CycleNet(nn.Module):
 
         return x
         
-

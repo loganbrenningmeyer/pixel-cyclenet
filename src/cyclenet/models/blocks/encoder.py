@@ -1,8 +1,10 @@
 import torch
 import torch.nn as nn
 
-from cyclenet.models.blocks import ResBlock, DownsampleBlock, TransformerBlock
-from cyclenet.models.utils import ContextIdentity
+from .attention import TransformerBlock
+from .resblock import ResBlock
+from .updown import DownsampleBlock
+from ..utils import ContextIdentity
 
 
 class EncoderBlock(nn.Module):

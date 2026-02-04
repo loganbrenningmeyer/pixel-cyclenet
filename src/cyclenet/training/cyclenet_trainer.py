@@ -5,7 +5,7 @@ from torch.optim import Optimizer
 from tqdm import tqdm
 
 from cyclenet.models import CycleNet
-from cyclenet.models.diffusion import DiffusionSchedule
+from cyclenet.diffusion import DiffusionSchedule
 
 
 class CycleNetTrainer:

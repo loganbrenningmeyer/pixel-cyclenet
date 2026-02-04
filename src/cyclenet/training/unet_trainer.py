@@ -1,3 +1,4 @@
+import wandb
 import torch
 import torch.nn as nn
 from omegaconf import DictConfig
@@ -70,13 +71,13 @@ class UNetTrainer:
                 loss = self.train_step(x_0, d_idx)
 
                 if step % self.log_config.loss_interval == 0:
-                    print(f"Step {step} Loss: {loss.item()}")
+                    self.log_loss("train/batch_loss", loss.item(), step, epoch)
 
                 if step % self.log_config.ckpt_interval == 0:
                     self.save_checkpoint(step)
 
                 if step % self.log_config.sample_interval == 0:
-                    self.generate_samples(step)
+                    self.generate_samples(step, epoch)
 
                 epoch_loss += loss.item()
                 num_batches += 1
@@ -124,6 +125,18 @@ class UNetTrainer:
         for p_ema, p_model in zip(self.ema_model.parameters(), self.model.parameters()):
             p_ema.mul_(self.ema_decay).add_(p_model, alpha=1.0 - self.ema_decay)
 
+    def log_loss(self, label: str, loss: float, step: int, epoch: int):
+        """
+        Logs loss to wandb dashboard
+        """
+        wandb.log(
+            {
+                label: loss, 
+                "epoch": epoch
+            }, 
+            step=step
+        )
+
     def save_checkpoint(self, step: int):
         """
         Saves model checkpoint (model, EMA, DomainEmbedding)
@@ -139,7 +152,7 @@ class UNetTrainer:
         }, ckpt_path)
 
     @torch.no_grad()
-    def generate_samples(self, step: int):
+    def generate_samples(self, step: int, epoch: int):
         """
         Generates UNet samples and saves to figs dir
         """
@@ -173,8 +186,29 @@ class UNetTrainer:
         else:
             raise ValueError("Sampler must be 'ddpm' or 'ddim'.")
         
-        self.save_samples(unet_samples, fig_dir / f"step{step}_unet.png")
-        self.save_samples(ema_samples, fig_dir / f"step{step}_ema.png")
+        unet_out_path = fig_dir / f"step{step}_unet.png"
+        ema_out_path = fig_dir / f"step{step}_ema.png"
+        self.save_samples(unet_samples, unet_out_path)
+        self.save_samples(ema_samples, ema_out_path)
+
+        # -------------------------
+        # Log samples
+        # -------------------------
+        wandb.log(
+            {
+                "figs/unet_samples": wandb.Image(unet_out_path),
+                "epoch": epoch
+            },
+            step=step
+        )
+
+        wandb.log(
+            {
+                "figs/ema_samples": wandb.Image(ema_out_path),
+                "epoch": epoch
+            },
+            step=step
+        )
         
     def save_samples(self, samples: torch.Tensor, out_path: str):
         # -------------------------
