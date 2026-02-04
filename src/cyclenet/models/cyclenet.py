@@ -39,8 +39,8 @@ class CycleNet(nn.Module):
         self,
         x: torch.Tensor,
         t: torch.Tensor,
-        cond_idx: torch.Tensor,
-        uncond_idx: torch.Tensor,
+        c_img: torch.Tensor,
+        c_idx: dict[str, torch.Tensor],
         p_dropout: float = 0.0,
     ):
         """
@@ -52,6 +52,9 @@ class CycleNet(nn.Module):
         Returns:
         
         """
+        cond_idx = c_idx["cond"]
+        uncond_idx = c_idx["uncond"]
+
         # -------------------------
         # CFG conditional embedding dropout (swap with uncond_idx)
         # -------------------------
@@ -66,9 +69,7 @@ class CycleNet(nn.Module):
         # -------------------------
         # ControlNet: Unconditional (source)
         # -------------------------
-        # -- Use input as ControlNet conditioning
-        c = x
-        ctrl_skips = self.control(x, c, t, uncond_emb)
+        ctrl_skips = self.control(x, t, c_img, uncond_emb)
 
         # -------------------------
         # UNet Backbone Encode (Frozen)
