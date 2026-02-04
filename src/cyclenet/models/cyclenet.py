@@ -42,7 +42,7 @@ class CycleNet(nn.Module):
         c_img: torch.Tensor,
         c_idx: dict[str, torch.Tensor],
         p_dropout: float = 0.0,
-    ):
+    ) -> torch.Tensor:
         """
         
         

@@ -2,7 +2,7 @@ import torch
 
 
 class DiffusionSchedule:
-    def __init__(self, schedule: str, T: int, beta_start: float, beta_end: float, s: float = 0.008):
+    def __init__(self, schedule: str, T: int, beta_start: float, beta_end: float, device: torch.device, s: float = 0.008):
         self.T = T
         self.beta_start = beta_start
         self.beta_end = beta_end
@@ -12,9 +12,9 @@ class DiffusionSchedule:
         # Create beta schedule
         # -------------------------
         if schedule == "linear":
-            self.betas = linear_beta_schedule(T, beta_start, beta_end)
+            self.betas = linear_beta_schedule(T, beta_start, beta_end).to(device)
         elif schedule == "cosine": 
-            self.betas = cosine_beta_schedule(T, s)
+            self.betas = cosine_beta_schedule(T, s).to(device)
         else:
             raise ValueError("Beta schedule must be 'linear' or 'cosine'.")
         
@@ -22,14 +22,39 @@ class DiffusionSchedule:
         # Precompute alphas / alpha_bars
         # -------------------------
         self.alphas = get_alphas(self.betas)
+        self.sqrt_alphas = torch.sqrt(self.alphas)
+
         self.alpha_bars = get_alpha_bars(self.betas)
         self.one_minus_alpha_bars = 1.0 - self.alpha_bars
 
-        self.alpha_bars_prev = torch.cat([torch.tensor([1.0]), self.alpha_bars[:-1]])
+        self.alpha_bars_prev = torch.cat([
+            self.alpha_bars.new_ones(1), 
+            self.alpha_bars[:-1]
+        ])
         self.one_minus_alpha_bars_prev = 1.0 - self.alpha_bars_prev
+        self.sqrt_alpha_bars_prev = torch.sqrt(self.alpha_bars_prev)
         
         self.sqrt_alpha_bars = torch.sqrt(self.alpha_bars)
         self.sqrt_one_minus_alpha_bars = torch.sqrt(1.0 - self.alpha_bars)
+
+    def ddim_timesteps(self, num_steps: int):
+        """
+        
+        
+        Args:
+        
+        
+        Returns:
+        
+        """
+        return torch.linspace(0, self.T-1, num_steps, dtype=torch.long)
+    
+
+def expand(v: torch.Tensor) -> torch.Tensor:
+    """
+    Reshapes tensor of shape (B,) to (B,1,1,1)
+    """
+    return v[:, None, None, None]
 
 
 def linear_beta_schedule(T: int, beta_start: float, beta_end: float) -> torch.Tensor:

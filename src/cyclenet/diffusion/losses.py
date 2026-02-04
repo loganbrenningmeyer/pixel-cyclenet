@@ -3,8 +3,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from cyclenet.models import UNet, CycleNet
-from cyclenet.models.diffusion import DiffusionSchedule
-from cyclenet.models.diffusion import q_sample, predict_x0_from_eps
+from cyclenet.diffusion import DiffusionSchedule
+from cyclenet.diffusion import q_sample, x0_from_eps
 
 
 # =========================
@@ -16,7 +16,7 @@ def diffusion_loss(
     t: torch.Tensor,
     d_emb: torch.Tensor,
     sched: DiffusionSchedule,
-):
+) -> torch.Tensor:
     """
 
 
@@ -48,7 +48,7 @@ def cyclenet_loss(
     cond_idx: torch.Tensor,
     uncond_idx: torch.Tensor,
     sched: DiffusionSchedule,
-):
+) -> dict[str, torch.Tensor]:
     """
 
 
@@ -87,7 +87,7 @@ def cyclenet_loss(
     eps_pred_cyc_x = model.forward(x_t, t, c_idx=c_y, c_img=x_0)
 
     # -- Predict clean y_0 / add noise
-    y_0_bar = predict_x0_from_eps(x_t, t, eps_pred_cyc_x, sched)
+    y_0_bar = x0_from_eps(x_t, t, eps_pred_cyc_x, sched)
 
     eps_y = torch.randn_like(y_0_bar)
     y_t = q_sample(y_0_bar, t, eps_y, sched)
@@ -109,7 +109,7 @@ def cyclenet_loss(
     return {"rec_loss": rec_loss, "cyc_loss": cyc_loss, "inv_loss": inv_loss}
 
 
-def reconstruction_loss(eps_pred: torch.Tensor, eps: torch.Tensor):
+def reconstruction_loss(eps_pred: torch.Tensor, eps: torch.Tensor) -> torch.Tensor:
     """
     => \mathcal{L}_{x \to x} = \mathbb{E}_{x_0,\epsilon_x} \Vert \epsilon_\theta(x_t,c_x,x_0) - \epsilon_x \Vert_2^2 \\
     
@@ -127,7 +127,7 @@ def cycle_consistency_loss(
     eps_pred_y: torch.Tensor,
     eps_x: torch.Tensor,
     eps_y: torch.Tensor,
-):
+) -> torch.Tensor:
     """
     => \mathcal{L}_{x \to y \to x} = \mathbb{E}_{x_0,\epsilon_x,\epsilon_y} \Vert \epsilon_\theta(y_t,c_x,x_0) + \epsilon_\theta(x_t,c_y,x_0) - \epsilon_x - \epsilon_y \Vert_2^2 \\
     
@@ -140,7 +140,7 @@ def cycle_consistency_loss(
     return F.mse_loss((eps_pred_x + eps_pred_y), (eps_x + eps_y))
 
 
-def invariance_loss(eps_pred_x: torch.Tensor, eps_pred_y: torch.Tensor):
+def invariance_loss(eps_pred_x: torch.Tensor, eps_pred_y: torch.Tensor) -> torch.Tensor:
     """
     => \mathcal{L}_{x \to y \to y} = \mathbb{E}_{x_0,\epsilon_x} \Vert \epsilon_\theta(x_t,c_y,x_0) - \epsilon_\theta(x_t,c_y,\bar{y}_0) \Vert_2^2 \\
     
