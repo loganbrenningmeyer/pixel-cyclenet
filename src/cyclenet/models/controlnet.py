@@ -54,7 +54,9 @@ class ControlNet(nn.Module):
         self.mid_zero_conv = nn.Conv2d(enc_out_ch, enc_out_ch, kernel_size=1)
         self.mid_zero_conv = zero_module(self.mid_zero_conv)
 
-    def forward(self, x: torch.Tensor, t: torch.Tensor, c_img: torch.Tensor, d_emb: torch.Tensor | None) -> list[torch.Tensor]:
+    def forward(
+        self, x: torch.Tensor, t: torch.Tensor, c_img: torch.Tensor, d_emb: torch.Tensor
+    ) -> list[torch.Tensor]:
         """
         Returns list of ControlNet skips to be consumed by the backbone
         Bottleneck and Decoder blocks

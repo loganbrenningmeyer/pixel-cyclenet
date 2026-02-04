@@ -153,7 +153,7 @@ class TransformerBlock(nn.Module):
         # -- Feed-forward network
         self.ffn = FFNBlock(in_ch, ffn_mult, ffn_drouput)
 
-    def forward(self, x: torch.Tensor, ctx: torch.Tensor | None) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, ctx: torch.Tensor) -> torch.Tensor:
         x = self.self_attn(x)
         if ctx is not None:
             x = self.cross_attn(x, ctx)

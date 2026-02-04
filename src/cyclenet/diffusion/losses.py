@@ -10,7 +10,7 @@ from cyclenet.diffusion import q_sample, x0_from_eps
 # =========================
 # UNet Loss
 # =========================
-def diffusion_loss(
+def unet_loss(
     model: UNet,
     x_0: torch.Tensor,
     t: torch.Tensor,

@@ -180,7 +180,7 @@ def cyclenet_ddim_loop(
     # -------------------------
     t_steps = ddim_steps_from_strength(sched, num_steps, strength)
     t_noise = torch.full((B,), t_steps[-1], device=device, dtype=torch.long)
-    
+
     eps = torch.randn_like(x_src)
     x_t = q_sample(x_src, t_noise, eps, sched) if strength > 0 else x_src
 
@@ -204,7 +204,9 @@ def cyclenet_ddim_loop(
         # -------------------------
         # Perform DDIM step
         # -------------------------
-        x_t = cyclenet_ddim_step(model, x_t, t, t_prev, c_img, c_idx_cond, sched, w, eta)
+        x_t = cyclenet_ddim_step(
+            model, x_t, t, t_prev, c_img, c_idx_cond, sched, w, eta
+        )
 
     return x_t
 
@@ -214,7 +216,7 @@ def unet_ddpm_step(
     model: UNet,
     x_t: torch.Tensor,
     t: torch.Tensor,
-    d_emb: torch.Tensor | None,
+    d_emb: torch.Tensor,
     sched: DiffusionSchedule,
 ) -> torch.Tensor:
     """
@@ -225,7 +227,7 @@ def unet_ddpm_step(
         model (UNet): UNet model used for denoising
         x_t (torch.Tensor): Noised image (B, C, H, W)
         t (torch.Tensor): Current denoising timestep batch (B,)
-        d_emb (torch.Tensor | None): Embedding of target domain (d_dim,)
+        d_emb (torch.Tensor): Embedding of target domain (d_dim,)
         sched (DiffusionSchedule): Object containing diffusion schedule information
 
     Returns:
@@ -246,7 +248,7 @@ def unet_ddpm_step(
 def unet_ddpm_loop(
     model: UNet,
     x_ref: torch.Tensor,
-    d_emb: torch.Tensor | None,
+    d_emb: torch.Tensor,
     sched: DiffusionSchedule,
 ) -> torch.Tensor:
     """
@@ -256,7 +258,7 @@ def unet_ddpm_loop(
     Args:
         model (UNet): UNet model used for denoising
         x_ref (torch.Tensor): Empty tensor to reference image shape, device, and dtype (B, C, H, W)
-        d_emb (torch.Tensor | None): Embedding of target domain (d_dim,)
+        d_emb (torch.Tensor): Embedding of target domain (d_dim,)
         sched (DiffusionSchedule): Object containing diffusion schedule information
 
     Returns:
@@ -293,7 +295,7 @@ def unet_ddim_step(
     x_t: torch.Tensor,
     t: torch.Tensor,
     t_prev: torch.Tensor,
-    d_emb: torch.Tensor | None,
+    d_emb: torch.Tensor,
     sched: DiffusionSchedule,
     eta: float = 0.0,
 ) -> torch.Tensor:
@@ -306,7 +308,7 @@ def unet_ddim_step(
         x_t (torch.Tensor): Noised image (B, C, H, W)
         t (torch.Tensor): Current denoising timestep batch (B,)
         t_prev (torch.Tensor): Previous DDIM timestep batch (B,)
-        d_emb (torch.Tensor | None): Embedding of target domain (d_dim,)
+        d_emb (torch.Tensor): Embedding of target domain (d_dim,)
         sched (DiffusionSchedule): Object containing diffusion schedule information
         eta (float): DDIM stochastic noise weight (`eta == 0` is deterministic)
 
@@ -328,7 +330,7 @@ def unet_ddim_step(
 def unet_ddim_loop(
     model: UNet,
     x_ref: torch.Tensor,
-    d_emb: torch.Tensor | None,
+    d_emb: torch.Tensor,
     sched: DiffusionSchedule,
     num_steps: int = 100,
     eta: float = 0.0,
@@ -340,14 +342,14 @@ def unet_ddim_loop(
     Args:
         model (UNet): UNet model used for denoising
         x_ref (torch.Tensor): Empty tensor to reference image shape, device, and dtype (B, C, H, W)
-        d_emb (torch.Tensor | None): Embedding of target domain (d_dim,)
+        d_emb (torch.Tensor): Embedding of target domain (d_dim,)
         sched (DiffusionSchedule): Object containing diffusion schedule information
         num_steps (int): Number of DDIM steps to uniformly divide the full T timesteps
-        eta (float): DDIM stochastic noise weight (`eta == 0` is deterministic)        
+        eta (float): DDIM stochastic noise weight (`eta == 0` is deterministic)
 
     Returns:
         (torch.Tensor): Generated image in target domain (B, C, H, W)
-    """    
+    """
     B = x_ref.shape[0]
     device = x_ref.device
 
@@ -391,7 +393,7 @@ def ddim_sigma(
         t (torch.Tensor): Current denoising timestep batch (B,)
         t_prev (torch.Tensor): Previous DDIM timestep batch (B,)
         sched (DiffusionSchedule): Object containing diffusion schedule information
-        eta (float): DDIM stochastic noise weight (`eta == 0` is deterministic)        
+        eta (float): DDIM stochastic noise weight (`eta == 0` is deterministic)
 
     Returns:
         (torch.Tensor): Standard deviation of stochastic noise (B, 1, 1, 1)
@@ -458,7 +460,7 @@ def ddpm_x_prev_from_eps(
         x_t (torch.Tensor): Noised source image (B, C, H, W)
         t (torch.Tensor): Current denoising timestep batch (B,)
         eps_pred (torch.Tensor): Predicted noise (B, C, H, W)
-        sched (DiffusionSchedule): Object containing diffusion schedule information        
+        sched (DiffusionSchedule): Object containing diffusion schedule information
 
     Returns:
         (torch.Tensor): Denoised previous sample x_t-1 (B, C, H, W)
@@ -493,7 +495,7 @@ def ddim_x_prev_from_eps(
         t (torch.Tensor): Current denoising timestep batch (B,)
         t_prev (torch.Tensor): Previous DDIM timestep batch (B,)
         eps_pred (torch.Tensor): Predicted noise (B, C, H, W)
-        sched (DiffusionSchedule): Object containing diffusion schedule information 
+        sched (DiffusionSchedule): Object containing diffusion schedule information
         eta (float): DDIM stochastic noise weight (`eta == 0` is deterministic)
 
     Returns:
@@ -519,7 +521,7 @@ def ddim_x_prev_from_eps(
         expand(sched.sqrt_alpha_bars[t_prev]) * x_0
         + torch.sqrt(expand(sched.one_minus_alpha_bars[t_prev]) - sigma**2) * eps_pred
         + sigma * z
-    ) 
+    )
 
 
 def q_sample(
@@ -596,13 +598,13 @@ def p_mean_variance(
 
 def ddpm_steps_from_strength(sched: DiffusionSchedule, strength: float) -> list[int]:
     """
-    
-    
+
+
     Args:
-    
-    
+
+
     Returns:
-    
+
     """
     # -- Clamp strength to [0, 1]
     strength = max(0.0, min(1.0, strength))
@@ -611,15 +613,17 @@ def ddpm_steps_from_strength(sched: DiffusionSchedule, strength: float) -> list[
     return list(range(t_step_max + 1))
 
 
-def ddim_steps_from_strength(sched: DiffusionSchedule, num_steps: int, strength: float) -> list[int]:
+def ddim_steps_from_strength(
+    sched: DiffusionSchedule, num_steps: int, strength: float
+) -> list[int]:
     """
-    
-    
+
+
     Args:
-    
-    
+
+
     Returns:
-    
+
     """
     # -- Clamp strength to [0, 1]
     strength = max(0.0, min(1.0, strength))
@@ -627,4 +631,4 @@ def ddim_steps_from_strength(sched: DiffusionSchedule, num_steps: int, strength:
     t_steps = sched.ddim_timesteps(num_steps)
     # -- Determine max DDIM step based on strength
     t_idx_max = int(strength * (num_steps - 1))
-    return t_steps[:t_idx_max + 1].tolist()
+    return t_steps[: t_idx_max + 1].tolist()

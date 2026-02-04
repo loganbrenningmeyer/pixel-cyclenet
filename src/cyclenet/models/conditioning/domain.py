@@ -16,8 +16,6 @@ class DomainEmbedding(nn.Module):
     def __init__(
         self,
         d_dim: int,
-        cond_label: str,
-        uncond_label: str,
         cond_idx: int = 0,
         uncond_idx: int = 1,
         init_std: float = 0.02,
@@ -26,8 +24,6 @@ class DomainEmbedding(nn.Module):
         # -------------------------
         # Define cond/uncond embedding indices
         # -------------------------
-        self.cond_label = cond_label
-        self.uncond_label = uncond_label
         # -- indices: 0 = cond (target domain), 1 = uncond (source domain)
         self.register_buffer("cond_idx", torch.tensor(cond_idx, dtype=torch.long))
         self.register_buffer("uncond_idx", torch.tensor(uncond_idx, dtype=torch.long))

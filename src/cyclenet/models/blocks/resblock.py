@@ -71,26 +71,34 @@ class ResBlock(nn.Module):
             self.d1 = zero_module(self.d1)
             self.d2 = zero_module(self.d2)
 
-    def _apply_adagn(self, x: torch.Tensor, norm: nn.GroupNorm, d_proj: nn.Linear, d_emb: torch.Tensor):
+    def _apply_adagn(
+        self,
+        x: torch.Tensor,
+        norm: nn.GroupNorm,
+        d_proj: nn.Linear,
+        d_emb: torch.Tensor,
+    ):
         """
         Applys AdaGN (GroupNorm + FiLM) using the domain embedding d_emb.
-        
+
         Args:
             x (torch.Tensor): Input of shape (B, C, H, W)
             norm (nn.GroupNorm): Normalization module
             d_proj (nn.Linear): Linear projection of d_emb
             d_emb: (torch.Tensor): Domain embedding
-        
+
         Returns:
             h (torch.Tensor): FiLM-modulated output using d_emb
         """
         h = norm(x)
-        gamma, beta = d_proj(d_emb).chunk(2, dim=1) # (B, C), (B, C)
-        gamma = gamma.unsqueeze(-1).unsqueeze(-1)   # (B, C, 1, 1)
-        beta  = beta.unsqueeze(-1).unsqueeze(-1)    # (B, C, 1, 1)
+        gamma, beta = d_proj(d_emb).chunk(2, dim=1)  # (B, C), (B, C)
+        gamma = gamma.unsqueeze(-1).unsqueeze(-1)  # (B, C, 1, 1)
+        beta = beta.unsqueeze(-1).unsqueeze(-1)  # (B, C, 1, 1)
         return h * (1.0 + gamma) + beta
 
-    def forward(self, x: torch.Tensor, t_emb: torch.Tensor, d_emb: torch.Tensor | None) -> torch.Tensor:
+    def forward(
+        self, x: torch.Tensor, t_emb: torch.Tensor, d_emb: torch.Tensor
+    ) -> torch.Tensor:
         # -- Skip connection projection
         skip = self.skip(x)
 

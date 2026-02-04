@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from cyclenet.models.conditioning import sinusoidal_embedding
+from cyclenet.models.conditioning import DomainEmbedding, sinusoidal_embedding
 from cyclenet.models.blocks import EncoderBlock, DecoderBlock, Bottleneck, FinalLayer
 
 
@@ -145,7 +145,7 @@ class UNet(nn.Module):
         self.final = FinalLayer(in_ch, 3)
 
     def forward(
-        self, x: torch.Tensor, t: torch.Tensor, d_emb: torch.Tensor | None) -> torch.Tensor:
+        self, x: torch.Tensor, t: torch.Tensor, d_emb: torch.Tensor) -> torch.Tensor:
         # -------------------------
         # Time Embedding
         # -------------------------
@@ -155,7 +155,7 @@ class UNet(nn.Module):
         # -------------------------
         # Domain Embeddings -> Context Tokens
         # -------------------------
-        d_ctx = None if d_emb is None else d_emb.unsqueeze(1)
+        d_ctx = d_emb.unsqueeze(1)
         
         # -------------------------
         # Encoder + Bottleneck

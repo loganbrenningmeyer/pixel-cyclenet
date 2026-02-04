@@ -1,0 +1,150 @@
+import os
+import copy
+import argparse
+import torch
+from pathlib import Path
+from torch.utils.data import DataLoader
+from omegaconf import OmegaConf, DictConfig
+
+from cyclenet.data import UNetDataset
+from cyclenet.diffusion import DiffusionSchedule
+from cyclenet.models import UNet
+from cyclenet.models.conditioning import DomainEmbedding
+from cyclenet.training import UNetTrainer
+
+
+def load_config(config_path: str) -> DictConfig:
+    config = OmegaConf.load(config_path)
+    return config
+
+
+def save_config(config: DictConfig, save_path: str):
+    OmegaConf.save(config, save_path)
+
+
+def main():
+    # -------------------------
+    # Parse args / load config
+    # -------------------------
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--config", type=str, required=True)
+    args = parser.parse_args()
+
+    config = load_config(args.config)
+
+    # -------------------------
+    # Create training dirs / save config
+    # -------------------------
+    train_dir = Path(config.run.runs_dir, config.run.name, "training")
+    train_dir.mkdir(parents=True, exist_ok=True)
+    (train_dir / "checkpoints").mkdir(parents=True, exist_ok=True)
+    (train_dir / "figs").mkdir(parents=True, exist_ok=True)
+
+    # -------------------------
+    # Create DataLoader
+    # -------------------------
+    src_dir, tgt_dir = config.data.src_dir, config.data.tgt_dir
+
+    dataset = UNetDataset(src_dir, tgt_dir)
+
+    dataloader = DataLoader(
+        dataset,
+        batch_size=config.train.batch_size,
+        shuffle=True,
+        num_workers=8,
+        pin_memory=True
+    )
+
+    # -------------------------
+    # Set device
+    # -------------------------
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    # -------------------------
+    # Initialize DomainEmbedding
+    # -------------------------
+    domain_emb = DomainEmbedding(d_dim=config.model.d_dim)
+    domain_emb.to(device)
+
+    # -------------------------
+    # Initialize UNet model / EMA model
+    # -------------------------
+    model = UNet(
+        in_ch=3,
+        base_ch=config.model.base_ch,
+        t_dim=config.model.t_dim,
+        d_dim=config.model.d_dim,
+        ch_mults=config.model.ch_mults,
+        num_res_blocks=config.model.num_res_blocks,
+        enc_heads=config.model.enc_heads,
+        mid_heads=config.model.mid_heads,
+        res_dropout=config.model.res_dropout,
+        attn_dropout=config.model.attn_dropout,
+        ffn_dropout=config.model.ffn_dropout
+    )
+    model.to(device)
+
+    ema_model = copy.deepcopy(model)
+    for p in ema_model.parameters():
+        p.requires_grad_(False)
+    ema_model.to(device)
+
+    # -------------------------
+    # Resume Training
+    # -------------------------
+    start_step = 1
+
+    if config.run.resume.enable:
+        ckpt_path = os.path.join(train_dir, "checkpoints", config.run.resume.ckpt_name)
+        ckpt = torch.load(ckpt_path, map_location="cpu")
+
+        model.load_state_dict(ckpt["model"])
+        ema_model.load_state_dict(ckpt["ema_model"])
+        domain_emb.load_state_dict(ckpt["domain_emb"])
+
+        start_step = ckpt["step"] + 1  # Resume training step from saved checkpoint
+
+        print(f"\n==== Resuming {config.run.resume.ckpt_name} training from step {ckpt['step']} ====")
+
+    # -------------------------
+    # Create DiffusionSchedule
+    # -------------------------
+    sched = DiffusionSchedule(
+        schedule=config.diffusion.schedule,
+        T=config.diffusion.T,
+        beta_start=config.diffusion.beta_start,
+        beta_end=config.diffusion.beta_end,
+        device=device,
+        s=config.diffusion.s,
+    )
+
+    # -------------------------
+    # Create Optimizer (UNet + DomainEmbedding)
+    # -------------------------
+    optimizer = torch.optim.AdamW(
+        params=list(model.parameters()) + list(domain_emb.parameters()),
+        lr=config.train.lr,
+        weight_decay=config.train.weight_decay
+    )
+
+    # -------------------------
+    # Create UNetTrainer / run training
+    # -------------------------
+    trainer = UNetTrainer(
+        model=model,
+        ema_model=ema_model,
+        domain_emb=domain_emb,
+        sched=sched,
+        optimizer=optimizer,
+        dataloader=dataloader,
+        device=device,
+        train_dir=train_dir,
+        log_config=config.logging,
+        ema_decay=config.train.ema_decay,
+        start_step=start_step
+    )
+    trainer.train(config.train.steps)
+
+
+if __name__ == "__main__":
+    main()
