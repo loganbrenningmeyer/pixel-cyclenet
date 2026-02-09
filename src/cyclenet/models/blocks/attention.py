@@ -45,7 +45,9 @@ class SelfAttentionBlock(nn.Module):
         x = x.flatten(2).transpose(1, 2)
 
         # -- Apply Multi-head self-attention
-        attn_out, _ = self.attn(x, x, x, need_weights=False)
+        x_fp32 = x.float()
+        attn_out, _ = self.attn(x_fp32, x_fp32, x_fp32, need_weights=False)
+        attn_out = attn_out.to(dtype=x.dtype)
 
         # -- (B, HW, C) -> (B, C, H, W)
         attn_out = attn_out.transpose(1, 2).contiguous().view(B, C, H, W)
@@ -111,7 +113,11 @@ class CrossAttentionBlock(nn.Module):
         ctx = ctx.to(dtype=x_seq.dtype, device=x_seq.device)
 
         # -- Apply Multi-head cross-attention (x: Q), (ctx: KV)
-        attn_out, _ = self.attn(x_seq, ctx, ctx, need_weights=False)
+        x_fp32 = x_seq.float()
+        ctx_fp32 = ctx.float()
+
+        attn_out, _ = self.attn(x_fp32, ctx_fp32, ctx_fp32, need_weights=False)
+        attn_out = attn_out.to(dtype=x_seq.dtype)
 
         # -- (B, HW, C) -> (B, C, H, W)
         attn_out = attn_out.transpose(1, 2).contiguous().view(B, C, H, W)

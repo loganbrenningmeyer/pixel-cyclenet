@@ -2,8 +2,8 @@
 # Run
 # =========================
 run:
-  name: "unet"
-  runs_dir: "./runs"
+  name: "unet_2"
+  runs_dir: "/develop/code/runs"
   resume:
     enable: 0
     ckpt_name: null
@@ -12,11 +12,11 @@ run:
 # Training
 # =========================
 train:
-  steps: 100000
-  batch_size: 128
-  lr: 2e-4
+  steps: 400000
+  batch_size: 64
+  lr: 1e-4
   weight_decay: 1e-4
-  ema_decay: 0.9999
+  ema_decay: 0.999
 
 # =========================
 # Model
@@ -25,11 +25,11 @@ model:
   base_ch: 128
   t_dim: 512
   d_dim: 128
-  ch_mults: [1,2,2,2]
+  ch_mults: [1,2,4,4]
 
   num_res_blocks: 2
-  enc_heads: [0,1,0,0]
-  mid_heads: 1
+  enc_heads: [0,0,0,4]
+  mid_heads: 4
 
   res_dropout: 0
   attn_dropout: 0
@@ -39,8 +39,9 @@ model:
 # Dataset
 # =========================
 data:
-  src_dir: ./data/mnist/train
-  tgt_dir: ./data/fashion/train
+  src_dir: /cgi/data/nvesd/workspaces/logan/data/ehd_organized/RGB_Filtered/train/sim
+  tgt_dir: /cgi/data/nvesd/workspaces/logan/data/ehd_organized/RGB_Filtered/train/real
+  image_size: 224
 
 # =========================
 # Diffusion
@@ -59,31 +60,11 @@ diffusion:
 logging:
   loss_interval: 10
   ckpt_interval: 25000
-  sample_interval: 500
+  sample_interval: 10000
 
   sample:
-    shape: [3, 32, 32]
-    sampler: ddpm
+    shape: [3, 224, 224]
+    sampler: ddim
     ddim_steps: 100
     eta: 0
     num_samples: 16
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

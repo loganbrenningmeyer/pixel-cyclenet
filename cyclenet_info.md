@@ -19,13 +19,13 @@
     - SIM $\rarr$ REAL
         - $x_0$: Image from SIM dataset
         - `cond_img`: Same image from SIM dataset
-        - `src_idx` = SIM (1)
-        - `tgt_idx` = REAL (0)
+        - `src_idx` = SIM (0)
+        - `tgt_idx` = REAL (1)
     - REAL $\rarr$ SIM
         - $x_0$: Image from REAL dataset
         - `cond_img`: Same image from REAL dataset
-        - `src_idx` = REAL (0)
-        - `tgt_idx` = SIM (1)
+        - `src_idx` = REAL (1)
+        - `tgt_idx` = SIM (0)
 
 ## Conditioning
 

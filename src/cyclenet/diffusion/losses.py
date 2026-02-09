@@ -106,7 +106,7 @@ def cyclenet_loss(
 
     inv_loss = invariance_loss(eps_pred_cyc_x, eps_pred_inv_y)
 
-    return {"rec_loss": rec_loss, "cyc_loss": cyc_loss, "inv_loss": inv_loss}
+    return {"rec": rec_loss, "cyc": cyc_loss, "inv": inv_loss}
 
 
 def reconstruction_loss(eps_pred: torch.Tensor, eps: torch.Tensor) -> torch.Tensor:
