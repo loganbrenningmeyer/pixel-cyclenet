@@ -47,11 +47,12 @@ def save_config(config: DictConfig, save_path: str):
 
 def main():
     # -------------------------
-    # Parse args / load config
+    # Parse args / load + save config
     # -------------------------
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=str, required=True)
     args = parser.parse_args()
+
     config = load_config(args.config)
 
     # ----------
@@ -70,11 +71,14 @@ def main():
         train_dir.mkdir(parents=True, exist_ok=True)
         (train_dir / "checkpoints").mkdir(parents=True, exist_ok=True)
         (train_dir / "figs").mkdir(parents=True, exist_ok=True)
+
+        save_config(config, train_dir / 'config.yaml')
+
     if is_ddp:
         dist.barrier()
 
     # -------------------------
-    # Dataset / DistributedSampler
+    # Dataset = DistributedSampler
     # -------------------------
     dataset = UNetDataset(config.data.src_dir, config.data.tgt_dir, image_size=config.data.image_size)
 
