@@ -238,13 +238,15 @@ class UNetTrainer:
         x_ref = torch.empty((num_samples, *shape), device=self.device, dtype=torch.float32)
         fig_dir = Path(self.train_dir) / "figs"
 
+        # -- DDPM
         if sampler.lower() == "ddpm":
             unet_samples = unet_ddpm_loop(model, x_ref, d_emb, self.sched)
             ema_samples  = unet_ddpm_loop(self.ema_model, x_ref, d_emb, self.sched)
+        # -- DDIM
         elif sampler.lower() == "ddim":
             num_steps = self.log_config.sample.ddim_steps
             eta = self.log_config.sample.eta
-            unet_samples = unet_ddim_loop(model, x_ref, d_emb, self.sched, num_steps, eta)   # <- model
+            unet_samples = unet_ddim_loop(model, x_ref, d_emb, self.sched, num_steps, eta)
             ema_samples  = unet_ddim_loop(self.ema_model, x_ref, d_emb, self.sched, num_steps, eta)
         else:
             raise ValueError("Sampler must be 'ddpm' or 'ddim'.")

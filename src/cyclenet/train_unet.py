@@ -74,7 +74,7 @@ def main():
         dist.barrier()
 
     # -------------------------
-    # Dataset = DistributedSampler
+    # Dataset / DistributedSampler
     # -------------------------
     dataset = UNetDataset(config.data.src_dir, config.data.tgt_dir, image_size=config.data.image_size)
 

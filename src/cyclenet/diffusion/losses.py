@@ -1,5 +1,4 @@
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
 
 from cyclenet.models import UNet, CycleNet
@@ -45,109 +44,120 @@ def cyclenet_loss(
     model: CycleNet,
     x_0: torch.Tensor,
     t: torch.Tensor,
-    cond_idx: torch.Tensor,
-    uncond_idx: torch.Tensor,
+    src_idx: torch.Tensor,
+    tgt_idx: torch.Tensor,
     sched: DiffusionSchedule,
 ) -> dict[str, torch.Tensor]:
     """
 
 
     Args:
+        model (CycleNet): 
+        x_0 (torch.Tensor): 
+        t (torch.Tensor): 
+        src_idx (torch.Tensor): Array of shape (B,) labeling 1 for samples from the source domain (X)
+        tgt_idx (torch.Tensor): Array of shape (B,) labeling 1 for samples from the target domain (Y)
+        sched (DiffusionSchedule): 
+        recon_weight (float): Reconstruction loss weight
+        cycle_weight (float): Cycle loss weight
+        consis_weight (float): Consistency loss weight
+        invar_weight (float): Invariance loss weight
 
 
     Returns:
 
     """
-    # -------------------------
-    # Define c_y (x -> y), c_x (y -> x) prompt pairs
-    # -------------------------
-    c_y = {"cond": cond_idx, "uncond": uncond_idx}
-    c_x = {"cond": uncond_idx, "uncond": cond_idx}
-
     # -------------------------
     # Noise input image
     # -------------------------
     eps_x = torch.randn_like(x_0)
     x_t = q_sample(x_0, t, eps_x, sched)
 
-    # -------------------------
-    # Reconstruction Loss
-    # => \mathcal{L}_{x \to x} = \mathbb{E}_{x_0,\epsilon_x} \Vert \epsilon_\theta(x_t,c_x,x_0) - \epsilon_x \Vert_2^2 \\
-    # -------------------------
-    # -- eps(x_t, c_x, x_0)
-    eps_pred_rec = model.forward(x_t, t, c_idx=c_x, c_img=x_0)
-
-    rec_loss = reconstruction_loss(eps_pred_rec, eps_x)
+    # -- Normalize x_0 [0,1] for c_img
+    x_0_ctrl = ((x_0 + 1.0) / 2.0).clamp(0.0, 1.0)
 
     # -------------------------
-    # Cycle Consistency Loss
-    # => \mathcal{L}_{x \to y \to x} = \mathbb{E}_{x_0,\epsilon_x,\epsilon_y} \Vert \epsilon_\theta(y_t,c_x,x_0) + \epsilon_\theta(x_t,c_y,x_0) - \epsilon_x - \epsilon_y \Vert_2^2 \\
+    # Reconstruction Loss (x -> x)
+    # => \mathcal{L}_\text{rec} = \mathbb{E}_{x_0,\epsilon_x} \Vert \epsilon_\theta(x_t,c_{x \to x},x_0) - \epsilon_x \Vert_2^2 \\
     # -------------------------
-    # -- eps(x_t, c_y, x_0)
-    eps_pred_cyc_x = model.forward(x_t, t, c_idx=c_y, c_img=x_0)
+    # => \epsilon_\theta(x_t, c_{x \to x}, x_0)
+    eps_xt_x2x_x0 = model.forward(
+        x_t=x_t, 
+        t=t, 
+        from_idx=src_idx,
+        to_idx=src_idx,
+        c_img=x_0_ctrl
+    )
 
-    # -- Predict clean y_0 / add noise
-    y_0_bar = x0_from_eps(x_t, t, eps_pred_cyc_x, sched)
+    recon_loss = F.mse_loss(eps_xt_x2x_x0, eps_x)
 
-    eps_y = torch.randn_like(y_0_bar)
-    y_t = q_sample(y_0_bar, t, eps_y, sched)
+    # -------------------------
+    # Cycle Loss
+    # => L_\text{cycle} = \mathbb{E}_{x_0,\epsilon_x,\epsilon_y}\Vert \epsilon_\theta(x_t, c_{x \to y}, x_0) + \epsilon_\theta(y_t, c_{y \to x}, \bar y_0) - \epsilon_x - \epsilon_y \Vert_2^2
+    # -------------------------
+    # => \epsilon_\theta(x_t, c_{x \to y}, x_0)
+    eps_xt_x2y_x0 = model.forward(
+        x_t=x_t, 
+        t=t, 
+        from_idx=src_idx,
+        to_idx=tgt_idx,
+        c_img=x_0_ctrl
+    )
 
-    # -- eps(y_t, c_x, x_0)
-    eps_pred_cyc_y = model.forward(y_t, t, c_idx=c_x, c_img=x_0)
+    # -- Predict clean y_0 / detached y_0 for c_img conditioning
+    y_0 = x0_from_eps(x_t, t, eps_xt_x2y_x0, sched)
+    y_0_cond = ((y_0.detach() + 1.0) / 2.0).clamp(0.0, 1.0)
 
-    cyc_loss = cycle_consistency_loss(eps_pred_cyc_x, eps_pred_cyc_y, eps_x, eps_y)
+    # -- Noise y_0 -> detached y_t / non-detached y_t_c
+    eps_y = torch.randn_like(y_0)
+
+    y_t = q_sample(y_0.detach(), t, eps_y, sched)
+    y_t_c = q_sample(y_0, t, eps_y, sched)
+
+    # => \epsilon_\theta(y_t, c_{y \to x}, \bar y_0)
+    eps_yt_y2x_y0 = model.forward(
+        x_t=y_t_c, 
+        t=t,
+        from_idx=tgt_idx,
+        to_idx=src_idx,
+        c_img=y_0_cond
+    )
+
+    cycle_loss = F.mse_loss((eps_xt_x2y_x0.detach() + eps_yt_y2x_y0), (eps_x + eps_y))
+
+    # -------------------------
+    # Consistency Loss
+    # => L_\text{consis} = \mathbb{E}_{x_0,\epsilon_x,\epsilon_y}\Vert \epsilon_\theta(x_t, c_{x \to y}, x_0) + \epsilon_\theta(y_t, c_{x \to x}, x_0) - \epsilon_x - \epsilon_y \Vert_2^2
+    # -------------------------
+    # => \epsilon_\theta(y_t, c_{x \to x}, x_0)
+    eps_yt_x2x_x0 = model.forward(
+        x_t=y_t,
+        t=t,
+        from_idx=src_idx,
+        to_idx=src_idx,
+        c_img=x_0_ctrl
+    )
+
+    consis_loss = F.mse_loss((eps_xt_x2y_x0.detach() + eps_yt_x2x_x0), (eps_x + eps_y))
 
     # -------------------------
     # Invariance Loss
     # => \mathcal{L}_{x \to y \to y} = \mathbb{E}_{x_0,\epsilon_x} \Vert \epsilon_\theta(x_t,c_y,x_0) - \epsilon_\theta(x_t,c_y,\bar{y}_0) \Vert_2^2 \\
     # -------------------------
-    # -- eps(x_t, c_y, y_0_bar)
-    eps_pred_inv_y = model.forward(x_t, t, c_idx=c_y, c_img=y_0_bar)
+    # => \epsilon_\theta(x_t, c_{x \to y}, \bar y_0)
+    eps_xt_y2y_y0 = model.forward(
+        x_t=x_t,
+        t=t,
+        from_idx=tgt_idx,
+        to_idx=tgt_idx,
+        c_img=y_0_cond
+    )
 
-    inv_loss = invariance_loss(eps_pred_cyc_x, eps_pred_inv_y)
+    invar_loss = F.mse_loss(eps_xt_x2y_x0, eps_xt_y2y_y0.detach())
 
-    return {"rec": rec_loss, "cyc": cyc_loss, "inv": inv_loss}
-
-
-def reconstruction_loss(eps_pred: torch.Tensor, eps: torch.Tensor) -> torch.Tensor:
-    """
-    => \mathcal{L}_{x \to x} = \mathbb{E}_{x_0,\epsilon_x} \Vert \epsilon_\theta(x_t,c_x,x_0) - \epsilon_x \Vert_2^2 \\
-    
-    Args:
-    
-    
-    Returns:
-    
-    """
-    return F.mse_loss(eps_pred, eps)
-
-
-def cycle_consistency_loss(
-    eps_pred_x: torch.Tensor,
-    eps_pred_y: torch.Tensor,
-    eps_x: torch.Tensor,
-    eps_y: torch.Tensor,
-) -> torch.Tensor:
-    """
-    => \mathcal{L}_{x \to y \to x} = \mathbb{E}_{x_0,\epsilon_x,\epsilon_y} \Vert \epsilon_\theta(y_t,c_x,x_0) + \epsilon_\theta(x_t,c_y,x_0) - \epsilon_x - \epsilon_y \Vert_2^2 \\
-    
-    Args:
-    
-    
-    Returns:
-    
-    """
-    return F.mse_loss((eps_pred_x + eps_pred_y), (eps_x + eps_y))
-
-
-def invariance_loss(eps_pred_x: torch.Tensor, eps_pred_y: torch.Tensor) -> torch.Tensor:
-    """
-    => \mathcal{L}_{x \to y \to y} = \mathbb{E}_{x_0,\epsilon_x} \Vert \epsilon_\theta(x_t,c_y,x_0) - \epsilon_\theta(x_t,c_y,\bar{y}_0) \Vert_2^2 \\
-    
-    Args:
-    
-    
-    Returns:
-    
-    """
-    return F.mse_loss(eps_pred_x, eps_pred_y)
+    return {
+        "recon": recon_loss,
+        "cycle": cycle_loss,
+        "consis": consis_loss,
+        "invar": invar_loss,
+    }

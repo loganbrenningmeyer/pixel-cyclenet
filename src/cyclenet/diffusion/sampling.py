@@ -10,8 +10,9 @@ def cyclenet_ddpm_step(
     model: CycleNet,
     x_t: torch.Tensor,
     t: torch.Tensor,
+    src_idx: torch.Tensor,
+    tgt_idx: torch.Tensor,
     c_img: torch.Tensor,
-    c_idx_cond: dict[str, torch.Tensor],
     sched: DiffusionSchedule,
     w: float = 1.0,
 ) -> torch.Tensor:
@@ -23,9 +24,7 @@ def cyclenet_ddpm_step(
         model (CycleNet): CycleNet model used for translation
         x_t (torch.Tensor): Noised source image (B, C, H, W)
         t (torch.Tensor): Current denoising timestep batch (B,)
-        c_img (torch.Tensor): Conditioning image for ControlNet (B, C, H, W)
-        c_idx_cond (dict[str, torch.Tensor]): Dictionary mapping batch indices to "cond" (target) or "uncond" (source)
-            - e.g., {"cond": (B,), "uncond": (B,)}
+        c_img (torch.Tensor): Conditioning image for ControlNet in range [0,1] and shape (B, C, H, W)
         sched (DiffusionSchedule): Object containing diffusion schedule information
         w (float): Classifier-free guidance weight
 
@@ -35,7 +34,7 @@ def cyclenet_ddpm_step(
     # -------------------------
     # Classifier-Free Guidance: Predict noise
     # -------------------------
-    eps_pred = predict_cyclenet_cfg(model, x_t, t, c_img, c_idx_cond, w)
+    eps_pred = predict_cyclenet_cfg(model, x_t, t, src_idx, tgt_idx, c_img, w)
 
     # -------------------------
     # Predict x_t-1 from eps_pred
@@ -47,8 +46,9 @@ def cyclenet_ddpm_step(
 def cyclenet_ddpm_loop(
     model: CycleNet,
     x_src: torch.Tensor,
+    src_idx: torch.Tensor,
+    tgt_idx: torch.Tensor,
     c_img: torch.Tensor,
-    c_idx_cond: dict[str, torch.Tensor],
     sched: DiffusionSchedule,
     w: float = 1.0,
     strength: float = 0.5,
@@ -60,9 +60,7 @@ def cyclenet_ddpm_loop(
     Args:
         model (CycleNet): CycleNet model used for translation
         x_src (torch.Tensor): Source (uncond) image to be translated to target (cond) domain (B, C, H, W)
-        c_img (torch.Tensor): Conditioning image for ControlNet (B, C, H, W)
-        c_idx_cond (dict[str, torch.Tensor]): Dictionary mapping batch indices to "cond" (target) or "uncond" (source)
-            - e.g., {"cond": (B,), "uncond": (B,)}
+        c_img (torch.Tensor): Conditioning image for ControlNet in range [0,1] and shape (B, C, H, W)
         sched (DiffusionSchedule): Object containing diffusion schedule information
         w (float): Classifier-free guidance weight
         strength (float): Proportion of DDPM steps to noise source before denoising during translation
@@ -94,7 +92,7 @@ def cyclenet_ddpm_loop(
         # -------------------------
         # Perform DDPM step
         # -------------------------
-        x_t = cyclenet_ddpm_step(model, x_t, t, c_img, c_idx_cond, sched, w)
+        x_t = cyclenet_ddpm_step(model, x_t, t, src_idx, tgt_idx, c_img, sched, w)
 
     return x_t
 
@@ -105,8 +103,9 @@ def cyclenet_ddim_step(
     x_t: torch.Tensor,
     t: torch.Tensor,
     t_prev: torch.Tensor,
+    src_idx: torch.Tensor,
+    tgt_idx: torch.Tensor,
     c_img: torch.Tensor,
-    c_idx_cond: dict[str, torch.Tensor],
     sched: DiffusionSchedule,
     w: float = 1.0,
     eta: float = 0.0,
@@ -120,9 +119,7 @@ def cyclenet_ddim_step(
         x_t (torch.Tensor): Noised source image (B, C, H, W)
         t (torch.Tensor): Current denoising timestep batch (B,)
         t_prev (torch.Tensor): Previous DDIM timestep batch (B,)
-        c_img (torch.Tensor): Conditioning image for ControlNet (B, C, H, W)
-        c_idx_cond (dict[str, torch.Tensor]): Dictionary mapping batch indices to "cond" (target) or "uncond" (source)
-            - e.g., {"cond": (B,), "uncond": (B,)}
+        c_img (torch.Tensor): Conditioning image for ControlNet in range [0,1] and shape (B, C, H, W)
         sched (DiffusionSchedule): Object containing diffusion schedule information
         w (float): Classifier-free guidance weight
         eta (float): DDIM stochastic noise weight (`eta == 0` is deterministic)
@@ -133,7 +130,7 @@ def cyclenet_ddim_step(
     # -------------------------
     # Classifier-Free Guidance: Predict noise
     # -------------------------
-    eps_pred = predict_cyclenet_cfg(model, x_t, t, c_img, c_idx_cond, w)
+    eps_pred = predict_cyclenet_cfg(model, x_t, t, src_idx, tgt_idx, c_img, w)
 
     # -------------------------
     # Compute x_prev (prev DDIM step)
@@ -145,8 +142,9 @@ def cyclenet_ddim_step(
 def cyclenet_ddim_loop(
     model: CycleNet,
     x_src: torch.Tensor,
+    src_idx: torch.Tensor,
+    tgt_idx: torch.Tensor,
     c_img: torch.Tensor,
-    c_idx_cond: dict[str, torch.Tensor],
     sched: DiffusionSchedule,
     w: float = 1.0,
     strength: float = 0.5,
@@ -160,9 +158,7 @@ def cyclenet_ddim_loop(
     Args:
         model (CycleNet): CycleNet model used for translation
         x_src (torch.Tensor): Source (uncond) image to be translated to target (cond) domain (B, C, H, W)
-        c_img (torch.Tensor): Conditioning image for ControlNet (B, C, H, W)
-        c_idx_cond (dict[str, torch.Tensor]): Dictionary mapping batch indices to "cond" (target) or "uncond" (source)
-            - e.g., {"cond": (B,), "uncond": (B,)}
+        c_img (torch.Tensor): Conditioning image for ControlNet in range [0,1] and shape (B, C, H, W)
         sched (DiffusionSchedule): Object containing diffusion schedule information
         w (float): Classifier-free guidance weight
         strength (float): Proportion of DDPM steps to noise source before denoising during translation
@@ -192,20 +188,20 @@ def cyclenet_ddim_loop(
     # -------------------------
     # Iteratively denoise: t = t_noise, ..., 0
     # -------------------------
-    for i, t_i in tqdm(enumerate(t_steps_rev)):
+    for i, t_i in tqdm(enumerate(t_steps_rev[:-1])):
         # -------------------------
         # Create t / t_prev batch
         # -------------------------
         t = torch.full((B,), t_i, device=device, dtype=torch.long)
 
-        t_prev_i = t_steps_rev[i + 1] if i + 1 < len(t_steps_rev) else 0
+        t_prev_i = t_steps_rev[i + 1]
         t_prev = torch.full((B,), t_prev_i, device=device, dtype=torch.long)
 
         # -------------------------
         # Perform DDIM step
         # -------------------------
         x_t = cyclenet_ddim_step(
-            model, x_t, t, t_prev, c_img, c_idx_cond, sched, w, eta
+            model, x_t, t, t_prev, src_idx, tgt_idx, c_img, sched, w, eta
         )
 
     return x_t
@@ -366,13 +362,13 @@ def unet_ddim_loop(
     # -------------------------
     # Iteratively denoise: t = T-1, ..., 0
     # -------------------------
-    for i, t_i in tqdm(enumerate(t_steps_rev)):
+    for i, t_i in tqdm(enumerate(t_steps_rev[:-1])):
         # -------------------------
         # Create t / t_prev batch
         # -------------------------
         t = torch.full((B,), t_i, device=device, dtype=torch.long)
 
-        t_prev_i = t_steps_rev[i + 1] if i + 1 < len(t_steps_rev) else 0
+        t_prev_i = t_steps_rev[i + 1]
         t_prev = torch.full((B,), t_prev_i, device=device, dtype=torch.long)
 
         # -------------------------
@@ -414,8 +410,9 @@ def predict_cyclenet_cfg(
     model: CycleNet,
     x_t: torch.Tensor,
     t: torch.Tensor,
+    src_idx: torch.Tensor,
+    tgt_idx: torch.Tensor,
     c_img: torch.Tensor,
-    c_idx_cond: dict[str, torch.Tensor],
     w: float = 1.0,
 ) -> torch.Tensor:
     """
@@ -428,21 +425,31 @@ def predict_cyclenet_cfg(
         x_t (torch.Tensor): Noised source image (B, C, H, W)
         t (torch.Tensor): Current denoising timestep batch (B,)
         c_img (torch.Tensor): Conditioning image for ControlNet (B, C, H, W)
-        c_idx_cond (dict[str, torch.Tensor]): Dictionary mapping batch indices to "cond" (target) or "uncond" (source)
-            - e.g., {"cond": (B,), "uncond": (B,)}
         w (float): Classifier-free guidance weight
 
     Returns:
         (torch.Tensor): Predicted noise after CFG weighting (B, C, H, W)
     """
-    # -- Define c_idx for unconditional pass (both unconditional)
-    c_idx_uncond = {"cond": c_idx_cond["uncond"], "uncond": c_idx_cond["uncond"]}
-
     # -------------------------
     # Perform conditional / unconditional passes
     # -------------------------
-    eps_cond = model.forward(x_t, t, c_img, c_idx_cond, p_dropout=0.0)
-    eps_uncond = model.forward(x_t, t, c_img, c_idx_uncond, p_dropout=0.0)
+    # -- [Conditional]: UNet Backbone (target), ControlNet (source)
+    eps_cond = model.forward(
+        x_t=x_t, 
+        t=t,
+        from_idx=src_idx,
+        to_idx=tgt_idx,
+        c_img=c_img
+    )
+
+    # -- [Unconditional]: UNet Backbone (source), ControlNet (source)
+    eps_uncond = model.forward(
+        x_t=x_t, 
+        t=t, 
+        from_idx=src_idx,
+        to_idx=src_idx,
+        c_img=c_img
+    )
 
     # -------------------------
     # CFG weighted sum

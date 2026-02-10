@@ -98,13 +98,13 @@ class UNet(nn.Module):
         # Bottleneck
         # -------------------------
         self.mid = Bottleneck(
-            in_ch=in_ch, 
-            t_dim=t_dim, 
+            in_ch=in_ch,
+            t_dim=t_dim,
             d_dim=d_dim,
             num_heads=mid_heads,
             res_dropout=res_dropout,
             attn_dropout=attn_dropout,
-            ffn_dropout=ffn_dropout
+            ffn_dropout=ffn_dropout,
         )
 
         # -------------------------
@@ -119,9 +119,7 @@ class UNet(nn.Module):
             # -- Pop DecoderBlock skip channels
             #    Keep post-downsample skips; they should be consumed at the same (lower) resolution.
             #    Therefore all but the highest-resolution block use n_res + 1.
-            num_skips = (
-                num_res_blocks if i == len(ch_mults) - 1 else num_res_blocks + 1
-            )
+            num_skips = num_res_blocks if i == len(ch_mults) - 1 else num_res_blocks + 1
             dec_skip_chs = [skip_chs.pop() for _ in range(num_skips)]
             # -- Initialize DecoderBlock
             self.decoder.append(
@@ -147,7 +145,17 @@ class UNet(nn.Module):
         self.final = FinalLayer(in_ch, 3)
 
     def forward(
-        self, x: torch.Tensor, t: torch.Tensor, d_emb: torch.Tensor) -> torch.Tensor:
+        self, x: torch.Tensor, t: torch.Tensor, d_emb: torch.Tensor
+    ) -> torch.Tensor:
+        """
+        
+        
+        Args:
+        
+        
+        Returns:
+        
+        """
         # -------------------------
         # Time Embedding
         # -------------------------
@@ -158,7 +166,7 @@ class UNet(nn.Module):
         # Domain Embeddings -> Context Tokens
         # -------------------------
         d_ctx = d_emb.unsqueeze(1)
-        
+
         # -------------------------
         # Encoder + Bottleneck
         # -------------------------
@@ -177,11 +185,22 @@ class UNet(nn.Module):
         x = self.final(x)
 
         return x
-    
-    def encode(self, x: torch.Tensor, t_emb: torch.Tensor, d_emb: torch.Tensor, d_ctx: torch.Tensor) -> tuple[torch.Tensor, list[torch.Tensor]]:
+
+    def encode(
+        self,
+        x: torch.Tensor,
+        t_emb: torch.Tensor,
+        d_emb: torch.Tensor,
+        d_ctx: torch.Tensor,
+    ) -> tuple[torch.Tensor, list[torch.Tensor]]:
         """
-        Run UNet Stem, Encoder, and Bottleneck, returning the Bottleneck output x and
-        the collect Encoder skips
+        
+        
+        Args:
+        
+        
+        Returns:
+        
         """
         # -------------------------
         # Stem

@@ -24,13 +24,14 @@ class CycleNet(nn.Module):
         self.d_dim = d_dim
 
         # -------------------------
-        # Freeze backbone UNet Encoder / Bottleneck
+        # Freeze backbone UNet Encoder, Bottleneck, and DomainEmbedding
         # -------------------------
         frozen_params = [
             self.backbone.stem.parameters(),
             self.backbone.t_mlp.parameters(),
             self.backbone.encoder.parameters(),
             self.backbone.mid.parameters(),
+            self.domain_emb.parameters(),
         ]
         for frozen_param in frozen_params:
             for p in frozen_param:
@@ -38,65 +39,61 @@ class CycleNet(nn.Module):
 
     def forward(
         self,
-        x: torch.Tensor,
+        x_t: torch.Tensor,
         t: torch.Tensor,
+        from_idx: torch.Tensor,
+        to_idx: torch.Tensor,
         c_img: torch.Tensor,
-        c_idx: dict[str, torch.Tensor],
-        p_dropout: float = 0.0,
     ) -> torch.Tensor:
         """
         
         
         Args:
-        
+            x_t (torch.Tensor): 
+            t (torch.Tensor): 
+            from_idx (torch.Tensor): Array of shape (B,) defining each sample's unconditional domain
+            to_idx (torch.Tensor): Array of shape (B,) defining each sample's conditional domain
+            c_img (torch.Tensor): Conditioning image in the range [0, 1] of shape (B, C, H, W)
         
         Returns:
         
         """
-        cond_idx = c_idx["cond"]
-        uncond_idx = c_idx["uncond"]
-
-        # -------------------------
-        # CFG conditional embedding dropout (swap with uncond_idx)
-        # -------------------------
-        cond_idx_drop = self.domain_emb.drop_cond_idx(cond_idx, uncond_idx, p_dropout)
-
         # -------------------------
         # Get samples' domain embeddings / -> Context tokens
         # -------------------------
-        cond_emb = self.domain_emb(cond_idx_drop)
-        uncond_emb = self.domain_emb(uncond_idx)
+        from_emb = self.domain_emb(from_idx)
+        to_emb = self.domain_emb(to_idx)
 
         # -------------------------
-        # ControlNet: Unconditional (source)
+        # ControlNet: (origin domain)
         # -------------------------
-        ctrl_skips = self.control(x, t, c_img, uncond_emb)
+        ctrl_skips = self.control(x_t, t, c_img, from_emb)
 
         # -------------------------
-        # UNet Backbone Encode (Frozen)
+        # UNet Backbone Encode: (destination domain)
         # -------------------------
         with torch.no_grad():
             t_emb = sinusoidal_embedding(t, self.backbone.base_ch)
             t_emb = self.backbone.t_mlp(t_emb)
 
-            cond_ctx = cond_emb.unsqueeze(1)
+            to_ctx = to_emb.unsqueeze(1)
 
-            x, skips = self.backbone.encode(x, t_emb, cond_emb, cond_ctx)
+            h, skips = self.backbone.encode(x_t, t_emb, to_emb, to_ctx)
 
         # -------------------------
         # UNet Backbone Decode: Add UNet skips + ControlNet skips
         # -------------------------
-        x = x + ctrl_skips.pop()
+        h = h + ctrl_skips.pop()
 
         for dec_block in self.backbone.decoder:
             skips_i = [skips.pop() for _ in range(dec_block.n_skips)]
             skips_i = [s + ctrl_skips.pop() for s in skips_i]
-            x = dec_block(x, t_emb, cond_emb, cond_ctx, skips_i)
+            h = dec_block(h, t_emb, to_emb, to_ctx, skips_i)
 
         # -------------------------
         # UNet Backbone FinalLayer
         # -------------------------
-        x = self.backbone.final(x)
+        h = self.backbone.final(h)
 
-        return x
+        return h
         
