@@ -1,5 +1,4 @@
 import torch
-import torch.nn as nn
 from omegaconf import DictConfig
 from pathlib import Path
 from torch.utils.data import DataLoader
@@ -35,7 +34,8 @@ class CycleNetTrainer:
         cycle_weight: float = 0.01,
         consis_weight: float = 0.1,
         invar_weight: float = 0.1,
-        start_step: int = 1
+        start_step: int = 1,
+        start_epoch: int = 1,
     ):
         self.model = model
         self.ema_model = ema_model
@@ -50,6 +50,7 @@ class CycleNetTrainer:
         self.ema_decay = ema_decay
         self.is_main = is_main
         self.start_step = start_step
+        self.start_epoch = start_epoch
 
         # -- Loss weights
         self.recon_weight = recon_weight
@@ -57,13 +58,17 @@ class CycleNetTrainer:
         self.consis_weight = consis_weight
         self.invar_weight = invar_weight
 
-        # -- Setup tensorboard
+        # -- Create directories
         self.train_dir = Path(train_dir)
         self.ckpt_dir = self.train_dir / "checkpoints"
         self.fig_dir = self.train_dir / "figs"
         self.tb_dir = self.train_dir / "tb"
 
+        self.ckpt_dir.mkdir(parents=True, exist_ok=True)
+        self.fig_dir.mkdir(parents=True, exist_ok=True)
         self.tb_dir.mkdir(parents=True, exist_ok=True)
+
+        # -- Setup tensorboard writer
         self.writer = SummaryWriter(log_dir=str(self.tb_dir)) if self.is_main else None
 
         # -- Create GradScaler
@@ -77,17 +82,16 @@ class CycleNetTrainer:
         
         """
         step = self.start_step
-        epoch = 1
+        epoch = self.start_epoch
 
         while step < steps:
             self.model.train()
 
             # ----------
-            # Set DistributedSampler epoch
+            # Set DomainSampler epoch
             # ----------
-            sampler = getattr(self.dataloader, "sampler", None)
-            if sampler is not None and hasattr(sampler, "set_epoch"):
-                sampler.set_epoch(epoch)
+            if hasattr(self.dataloader.batch_sampler, "set_epoch"):
+                self.dataloader.batch_sampler.set_epoch(epoch)
 
             # ----------
             # Run training epoch
@@ -95,7 +99,7 @@ class CycleNetTrainer:
             epoch_loss = 0.0
             num_batches = 0
 
-            for x_0, src_idx, tgt_idx in tqdm(self.dataloader, desc=f"Epoch {epoch}, Step {epoch}", unit="Batch"):
+            for x_0, src_idx, tgt_idx in tqdm(self.dataloader, desc=f"Epoch {epoch}, Step {step}", unit="Batch"):
                 if step >= steps:
                     break
 
@@ -109,7 +113,7 @@ class CycleNetTrainer:
                     self.log_loss("train/batch_loss", loss_dict, step, epoch)
 
                 if self.is_main and step % self.log_config.ckpt_interval == 0:
-                    self.save_checkpoint(step)
+                    self.save_checkpoint(step, epoch)
                 if dist.is_initialized():
                     dist.barrier()
 
@@ -125,8 +129,12 @@ class CycleNetTrainer:
             # ----------
             # Log average epoch loss
             # ----------
-            epoch_loss /= num_batches
-            print(f"Epoch {epoch} Average Loss: {epoch_loss}")
+            if num_batches > 0:
+                epoch_loss /= num_batches
+
+            if self.is_main:
+                print(f"Epoch {epoch} Average Loss: {epoch_loss}")
+
             epoch += 1
 
         if self.writer is not None:
@@ -178,7 +186,7 @@ class CycleNetTrainer:
                     flush=True,
                 )
             self.optimizer.zero_grad(set_to_none=True)
-            return loss_dict, loss.detach()
+            return loss_dict, torch.zeros((), device=self.device)
         
         # -- Scale, backward, step, and update
         self.scaler.scale(loss).backward()
@@ -205,24 +213,24 @@ class CycleNetTrainer:
         if self.writer is None:
             return
         
-        self.writer.add_scalar(f"{label}/recon", loss_dict["recon"].item(), step)
-        self.writer.add_scalar(f"{label}/cycle", loss_dict["cycle"].item(), step)
-        self.writer.add_scalar(f"{label}/consis", loss_dict["consis"].item(), step)
-        self.writer.add_scalar(f"{label}/invar", loss_dict["invar"].item(), step)
+        self.writer.add_scalar(f"{label}/recon", self.recon_weight * loss_dict["recon"].item(), step)
+        self.writer.add_scalar(f"{label}/cycle", self.cycle_weight * loss_dict["cycle"].item(), step)
+        self.writer.add_scalar(f"{label}/consis", self.consis_weight * loss_dict["consis"].item(), step)
+        self.writer.add_scalar(f"{label}/invar", self.invar_weight * loss_dict["invar"].item(), step)
         self.writer.add_scalar("train/epoch", epoch, step)       
 
-    def save_checkpoint(self, step: int):
+    def save_checkpoint(self, step: int, epoch: int):
         """
         Saves model checkpoint (model, EMA, DomainEmbedding)
         """
-        ckpt_path = Path(self.train_dir) / "checkpoints" / f"model-step{step}.ckpt"
+        ckpt_path = Path(self.train_dir) / "checkpoints" / f"step-{step}.ckpt"
 
         torch.save({
             "model": unwrap(self.model).state_dict(),
             "ema_model": self.ema_model.state_dict(),
-            "domain_emb": unwrap(self.model.domain_emb).state_dict(),
             "optimizer": self.optimizer.state_dict(),
-            "step": step
+            "step": step,
+            "epoch": epoch,
         }, ckpt_path)
 
     @torch.no_grad()
@@ -230,7 +238,7 @@ class CycleNetTrainer:
         """
         Generates CycleNet translation samples and saves to figs dir
         """
-        if not self.is_main:
+        if not self.is_main or self.writer is None:
             return
         
         model = unwrap(self.model)
@@ -250,85 +258,104 @@ class CycleNetTrainer:
         tgt_idx = torch.ones((B,), device=self.device, dtype=torch.long)
 
         # -------------------------
-        # Generate samples
+        # Save / log source images
         # -------------------------
-        fig_dir = Path(self.train_dir) / "figs"
+        samples_dir = Path(self.train_dir) / "figs" / f"step-{step}"
+        samples_dir.mkdir(parents=True, exist_ok=True)
 
+        x_src_grid = self.save_samples(x_src, samples_dir / "x_src.png")
+        self.writer.add_image("figs/x_src", x_src_grid, step)
+
+        # -- Track epoch
+        self.writer.add_scalar("train/epoch", epoch, step)
+
+        # -------------------------
+        # Generate samples for each noise strength / cfg_weight
+        # -------------------------
         sampler = self.sample_config.sampler
-        cfg_weight = self.sample_config.cfg_weight
-        noise_strength = self.sample_config.noise_strength
+        cfg_weights = self.sample_config.cfg_weights
+        noise_strengths = self.sample_config.noise_strengths
 
-        # -- DDPM
-        if sampler.lower() == "ddpm":
-            unet_samples = cyclenet_ddpm_loop(
-                model=model, 
-                x_src=x_src, 
-                src_idx=src_idx, 
-                tgt_idx=tgt_idx,
-                c_img=x_src_ctrl,
-                sched=self.sched,
-                w=cfg_weight,
-                strength=noise_strength
-            )
+        for noise_strength in noise_strengths:
 
-            ema_samples = cyclenet_ddpm_loop(
-                model=self.ema_model, 
-                x_src=x_src, 
-                src_idx=src_idx, 
-                tgt_idx=tgt_idx,
-                c_img=x_src_ctrl,
-                sched=self.sched,
-                w=cfg_weight,
-                strength=noise_strength
-            )
+            for cfg_weight in cfg_weights:
+                # -- DDPM
+                if sampler.lower() == "ddpm":
+                    model_samples, x_noise = cyclenet_ddpm_loop(
+                        model=model, 
+                        x_src=x_src, 
+                        src_idx=src_idx, 
+                        tgt_idx=tgt_idx,
+                        c_img=x_src_ctrl,
+                        sched=self.sched,
+                        w=cfg_weight,
+                        strength=noise_strength
+                    )
 
-        # -- DDIM
-        elif sampler.lower() == "ddim":
-            num_steps = self.sample_config.ddim_steps
-            eta = self.sample_config.eta
+                    ema_samples, x_noise = cyclenet_ddpm_loop(
+                        model=self.ema_model, 
+                        x_src=x_src, 
+                        src_idx=src_idx, 
+                        tgt_idx=tgt_idx,
+                        c_img=x_src_ctrl,
+                        sched=self.sched,
+                        w=cfg_weight,
+                        strength=noise_strength
+                    )
 
-            unet_samples = cyclenet_ddim_loop(
-                model=model, 
-                x_src=x_src, 
-                src_idx=src_idx, 
-                tgt_idx=tgt_idx,
-                c_img=x_src_ctrl,
-                sched=self.sched,
-                w=cfg_weight,
-                strength=noise_strength,
-                num_steps=num_steps,
-                eta=eta
-            )
+                # -- DDIM
+                elif sampler.lower() == "ddim":
+                    num_steps = self.sample_config.ddim_steps
+                    eta = self.sample_config.eta
 
-            ema_samples = cyclenet_ddim_loop(
-                model=self.ema_model, 
-                x_src=x_src, 
-                src_idx=src_idx, 
-                tgt_idx=tgt_idx,
-                c_img=x_src_ctrl,
-                sched=self.sched,
-                w=cfg_weight,
-                strength=noise_strength,
-                num_steps=num_steps,
-                eta=eta
-            )
-        else:
-            raise ValueError("Sampler must be 'ddpm' or 'ddim'.")
-        
+                    model_samples, x_noise = cyclenet_ddim_loop(
+                        model=model, 
+                        x_src=x_src, 
+                        src_idx=src_idx, 
+                        tgt_idx=tgt_idx,
+                        c_img=x_src_ctrl,
+                        sched=self.sched,
+                        w=cfg_weight,
+                        strength=noise_strength,
+                        num_steps=num_steps,
+                        eta=eta
+                    )
+
+                    ema_samples, x_noise = cyclenet_ddim_loop(
+                        model=self.ema_model, 
+                        x_src=x_src, 
+                        src_idx=src_idx, 
+                        tgt_idx=tgt_idx,
+                        c_img=x_src_ctrl,
+                        sched=self.sched,
+                        w=cfg_weight,
+                        strength=noise_strength,
+                        num_steps=num_steps,
+                        eta=eta
+                    )
+                else:
+                    raise ValueError("Sampler must be 'ddpm' or 'ddim'.")
+
+                # -------------------------
+                # Save / log samples for noise_strength / cfg_weight pair
+                # -------------------------
+                cfg_str = f"cfg-{cfg_weight:.1f}"
+                strength_str = f"strength-{noise_strength:.2f}"
+                
+                model_grid = self.save_samples(model_samples, samples_dir / strength_str / cfg_str / "model.png")
+                ema_grid = self.save_samples(ema_samples, samples_dir / strength_str / cfg_str / "ema.png")
+
+                self.writer.add_image(f"figs/model/{strength_str}_{cfg_str}", model_grid, step)
+                self.writer.add_image(f"figs/ema/{strength_str}_{cfg_str}", ema_grid, step)
+
+            # -------------------------
+            # Save / log noised source images
+            # -------------------------
+            noise_grid = self.save_samples(x_noise, samples_dir / strength_str / "x_t.png")
+            self.writer.add_image(f"figs/x_t/{strength_str}", noise_grid, step)
+
         # -- Put model back in train mode
         model.train()
-        
-        unet_out_path = fig_dir / f"step{step}_unet.png"
-        ema_out_path = fig_dir / f"step{step}_ema.png"
-        unet_grid = self.save_samples(unet_samples, unet_out_path)
-        ema_grid = self.save_samples(ema_samples, ema_out_path)
-
-        # -------------------------
-        # Log samples
-        # -------------------------
-        self.writer.add_image("figs/unet_samples", unet_grid, step)
-        self.writer.add_image("figs/ema_samples", ema_grid, step)
-        self.writer.add_scalar("train/epoch", epoch, step)
 
     def save_samples(self, samples: torch.Tensor, out_path: str):
         # -------------------------

@@ -148,7 +148,7 @@ $$\mathcal{L}_{x \to y \to y} = \mathbb{E}_{x_0, \varepsilon_x} \|\varepsilon_\t
 
 ### Code
 
-- In the code, they compute $\epsilon_\theta$ using $x_0$ as the conditioning image the same as in the paper:
+- In the code, they replace invariance loss with `disc_loss`, but it is close to the invariance loss from the paper. They compute $\epsilon_\theta$ using $x_0$ as the conditioning image the same as in the paper:
 
     - $\epsilon_\theta(x_t, c_{x \to y}, x_0)=$`model.forward(`$x_t,t,$`from_x_idx`$,$`to_y_idx`$,x_0$`)`
 

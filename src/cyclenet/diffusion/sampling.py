@@ -52,7 +52,7 @@ def cyclenet_ddpm_loop(
     sched: DiffusionSchedule,
     w: float = 1.0,
     strength: float = 0.5,
-):
+) -> tuple[torch.Tensor, torch.Tensor]:
     """
     Performs full DDPM translation for `CycleNet` model, translating in the direction
     of "uncond" -> "cond" as defined by `c_idx_cond` with CFG weighted by `w`
@@ -80,6 +80,8 @@ def cyclenet_ddpm_loop(
     eps = torch.randn_like(x_src)
     x_t = q_sample(x_src, t_noise, eps, sched) if strength > 0 else x_src
 
+    x_noise = x_t.clone()
+
     # -------------------------
     # Iteratively denoise: t_i = T-1, ..., 0
     # -------------------------
@@ -94,7 +96,7 @@ def cyclenet_ddpm_loop(
         # -------------------------
         x_t = cyclenet_ddpm_step(model, x_t, t, src_idx, tgt_idx, c_img, sched, w)
 
-    return x_t
+    return x_t, x_noise
 
 
 @torch.no_grad()
@@ -150,7 +152,7 @@ def cyclenet_ddim_loop(
     strength: float = 0.5,
     num_steps: int = 100,
     eta: float = 0.0,
-):
+) -> tuple[torch.Tensor, torch.Tensor]:
     """
     Performs full DDIM translation for `CycleNet` model, translating in the direction
     of "uncond" -> "cond" as defined by `c_idx_cond` with CFG weighted by `w`
@@ -180,6 +182,8 @@ def cyclenet_ddim_loop(
     eps = torch.randn_like(x_src)
     x_t = q_sample(x_src, t_noise, eps, sched) if strength > 0 else x_src
 
+    x_noise = x_t.clone()
+
     # -------------------------
     # Uniformly sample reverse DDIM steps from t_noise
     # -------------------------
@@ -204,7 +208,7 @@ def cyclenet_ddim_loop(
             model, x_t, t, t_prev, src_idx, tgt_idx, c_img, sched, w, eta
         )
 
-    return x_t
+    return x_t, x_noise
 
 
 @torch.no_grad()

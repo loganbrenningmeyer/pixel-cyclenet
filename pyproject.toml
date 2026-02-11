@@ -15,7 +15,9 @@ dependencies = [
     "omegaconf",
     "wandb",
     "moviepy",
-    "imageio"
+    "imageio",
+    "opencv-python",
+    "albumentations",
 ]
 
 [tool.setuptools.packages.find]

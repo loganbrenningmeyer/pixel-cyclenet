@@ -2,11 +2,11 @@
 # Run
 # =========================
 run:
-  name: "cyclenet"
+  name: "cyclenet_noise_0.2_cfg_3"
   runs_dir: "/develop/code/runs/cyclenet"
 
   # -- UNet Backbone ckpt
-  unet_ckpt: "/develop/code/runs/unet_128/training/checkpoints/model-step100000.ckpt"
+  unet_ckpt: "/develop/code/runs/unet_2/training/checkpoints/model-step100000.ckpt"
 
   # -- Resume CycleNet training
   resume:
@@ -18,8 +18,8 @@ run:
 # =========================
 train:
   steps: 100000
-  batch_size: 4
-  lr: 1e-5
+  batch_size: 16
+  lr: 2e-5
   weight_decay: 1e-4
   ema_decay: 0.999
 
@@ -40,6 +40,7 @@ data:
   src_dir: /cgi/data/nvesd/workspaces/logan/data/ehd_organized/RGB_Filtered/train/sim/0002
   tgt_dir: /cgi/data/nvesd/workspaces/logan/data/ehd_organized/RGB_Filtered/train/real/0002
   image_size: 224
+  transform_id: 2
 
 # =========================
 # Logging
@@ -47,7 +48,7 @@ data:
 logging:
   loss_interval: 10
   ckpt_interval: 5000
-  sample_interval: 2500
+  sample_interval: 5000
 
 # =========================
 # Sampling
@@ -57,6 +58,6 @@ sampling:
   sampler: ddim
   ddim_steps: 100
   eta: 0
-  cfg_weight: 1.0
+  cfg_weight: 3.0
   # -- noise_strength: Proportion of total DDPM timesteps to noise to
-  noise_strength: 0.1
+  noise_strength: 0.2

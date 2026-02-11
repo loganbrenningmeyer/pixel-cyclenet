@@ -2,20 +2,23 @@
 # Run
 # =========================
 run:
-  name: "unet_2"
-  runs_dir: "/develop/code/runs"
+  name: "unet_augs_split"
+  runs_dir: "/develop/code/runs/unet"
+
   resume:
     enable: 0
     ckpt_name: null
+
+  seed: 42
 
 # =========================
 # Training
 # =========================
 train:
-  steps: 400000
+  steps: 200000
   batch_size: 64
   lr: 1e-4
-  weight_decay: 1e-4
+  weight_decay: 0.01
   ema_decay: 0.9999
 
 # =========================
@@ -31,7 +34,7 @@ model:
   enc_heads: [0,0,0,4]
   mid_heads: 4
 
-  res_dropout: 0
+  res_dropout: 0.05
   attn_dropout: 0
   ffn_dropout: 0
 
@@ -42,6 +45,7 @@ data:
   src_dir: /cgi/data/nvesd/workspaces/logan/data/ehd_organized/RGB_Filtered/train/sim
   tgt_dir: /cgi/data/nvesd/workspaces/logan/data/ehd_organized/RGB_Filtered/train/real
   image_size: 224
+  transform_id: 2
 
 # =========================
 # Diffusion
@@ -59,8 +63,8 @@ diffusion:
 # =========================
 logging:
   loss_interval: 10
-  ckpt_interval: 25000
-  sample_interval: 10000
+  ckpt_interval: 10000
+  sample_interval: 5000
 
   sample:
     shape: [3, 224, 224]

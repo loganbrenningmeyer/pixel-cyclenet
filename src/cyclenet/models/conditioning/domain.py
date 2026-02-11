@@ -8,23 +8,21 @@ class DomainEmbedding(nn.Module):
 
     Parameters:
         d_dim (int): Dimensionality of domain embeddings
-        cond_label (str): Label used to access the conditional embedding (idx 0)
-        uncond_label (str): Label used to access the unconditional embedding (idx 1)
         init_std (float): Initial embedding standard deviation
     """
 
     def __init__(
         self,
         d_dim: int,
-        cond_idx: int = 0,
-        uncond_idx: int = 1,
+        cond_idx: int = 1,
+        uncond_idx: int = 0,
         init_std: float = 0.02,
     ):
         super().__init__()
         # -------------------------
         # Define cond/uncond embedding indices
         # -------------------------
-        # -- indices: 0 = cond (target domain), 1 = uncond (source domain)
+        # -- indices: cond = 1 (target domain), uncond = 0 (source domain)
         self.register_buffer("cond_idx", torch.tensor(cond_idx, dtype=torch.long))
         self.register_buffer("uncond_idx", torch.tensor(uncond_idx, dtype=torch.long))
 
@@ -84,25 +82,3 @@ class DomainEmbedding(nn.Module):
         out[drop] = uncond_idx[drop]
 
         return out
-
-    def get_pair(self, batch_size: int) -> tuple[torch.Tensor, torch.Tensor]:
-        """
-        Returns a batch of cond/uncond embeddings each (B, d_dim)
-
-        Args:
-            batch_size (int): Training / inference batch size
-
-        Returns:
-            cond_dim (torch.Tensor): Batch of conditional embeddings of shape (B, d_dim)
-            uncond_dim (torch.Tensor): Batch of unconditional embeddings of shape (B, d_dim)
-        """
-        device = self.embed.weight.device
-
-        cond_idx = self.cond_idx.expand(batch_size).to(device)  # (B]
-        uncond_idx = self.uncond_idx.expand(batch_size).to(device)  # (B]
-
-        cond_emb = self.embed(cond_idx)  # (B, d_dim)
-        uncond_emb = self.embed(uncond_idx)  # (B, d_dim)
-
-        # -- Return embeddings: (B, d_dim), (B, d_dim)
-        return cond_emb, uncond_emb

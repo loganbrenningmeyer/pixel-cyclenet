@@ -1,5 +1,4 @@
 import torch
-import torch.nn as nn
 from omegaconf import DictConfig
 from pathlib import Path
 from torch.utils.data import DataLoader
@@ -28,9 +27,11 @@ class UNetTrainer:
         device: torch.device,
         train_dir: str,
         log_config: DictConfig,
+        sample_config: DictConfig,
         ema_decay: float,
         is_main: bool,
-        start_step: int = 1
+        start_step: int = 1,
+        start_epoch: int = 1,
     ):
         self.model = model
         self.ema_model = ema_model
@@ -40,17 +41,23 @@ class UNetTrainer:
         self.dataloader = dataloader
         self.device = device
         self.log_config = log_config
+        self.sample_config = sample_config
         self.ema_decay = ema_decay
         self.is_main = is_main
         self.start_step = start_step
+        self.start_epoch = start_epoch
 
-        # -- Setup tensorboard
+        # -- Create directories
         self.train_dir = Path(train_dir)
         self.ckpt_dir = self.train_dir / "checkpoints"
         self.fig_dir = self.train_dir / "figs"
         self.tb_dir = self.train_dir / "tb"
 
+        self.ckpt_dir.mkdir(parents=True, exist_ok=True)
+        self.fig_dir.mkdir(parents=True, exist_ok=True)
         self.tb_dir.mkdir(parents=True, exist_ok=True)
+
+        # -- Setup tensorboard writer
         self.writer = SummaryWriter(log_dir=str(self.tb_dir)) if self.is_main else None
 
         # -- Create GradScaler
@@ -64,17 +71,16 @@ class UNetTrainer:
         
         """
         step = self.start_step
-        epoch = 1
+        epoch = self.start_epoch
 
         while step < steps:
             self.model.train()
 
             # ----------
-            # Set DistributedSampler epoch
+            # Set DomainSampler epoch
             # ----------
-            sampler = getattr(self.dataloader, "sampler", None)
-            if sampler is not None and hasattr(sampler, "set_epoch"):
-                sampler.set_epoch(epoch)
+            if hasattr(self.dataloader.batch_sampler, "set_epoch"):
+                self.dataloader.batch_sampler.set_epoch(epoch)
 
             # -------------------------
             # Run training epoch
@@ -96,7 +102,7 @@ class UNetTrainer:
                     self.log_loss("train/batch_loss", loss.item(), step, epoch)
 
                 if self.is_main and step % self.log_config.ckpt_interval == 0:
-                    self.save_checkpoint(step)
+                    self.save_checkpoint(step, epoch)
                 if dist.is_initialized():
                     dist.barrier()
 
@@ -113,7 +119,9 @@ class UNetTrainer:
             # Log average epoch loss
             # -------------------------
             epoch_loss /= num_batches
-            print(f"Epoch {epoch} Average Loss: {epoch_loss}")
+            if self.is_main:
+                print(f"Epoch {epoch} Average Loss: {epoch_loss}")
+
             epoch += 1
 
         if self.writer is not None:
@@ -156,7 +164,7 @@ class UNetTrainer:
                     flush=True,
                 )
             self.optimizer.zero_grad(set_to_none=True)
-            return loss.detach()
+            return torch.zeros((), device=self.device)
 
         # -- Scale, backward, step, and update
         self.scaler.scale(loss).backward()
@@ -189,23 +197,24 @@ class UNetTrainer:
         self.writer.add_scalar(label, loss, step)
         self.writer.add_scalar("train/epoch", epoch, step)
 
-    def save_checkpoint(self, step: int):
+    def save_checkpoint(self, step: int, epoch: int):
         """
         Saves model checkpoint (model, EMA, DomainEmbedding)
         """
-        ckpt_path = Path(self.train_dir) / "checkpoints" / f"model-step{step}.ckpt"
+        ckpt_path = Path(self.train_dir) / "checkpoints" / f"step-{step}.ckpt"
 
         torch.save({
             "model": unwrap(self.model).state_dict(),
             "ema_model": self.ema_model.state_dict(),
             "domain_emb": unwrap(self.domain_emb).state_dict(),
             "optimizer": self.optimizer.state_dict(),
-            "step": step
+            "step": step,
+            "epoch": epoch,
         }, ckpt_path)
 
     @torch.no_grad()
     def generate_samples(self, step: int, epoch: int):
-        if not self.is_main:
+        if not self.is_main or self.writer is None:
             return
 
         model = unwrap(self.model)
@@ -217,9 +226,9 @@ class UNetTrainer:
         # -------------------------
         # Setup
         # -------------------------
-        num_samples = int(self.log_config.sample.num_samples)
-        shape = self.log_config.sample.shape
-        sampler = self.log_config.sample.sampler
+        num_samples = int(self.sample_config.num_samples)
+        shape = self.sample_config.shape
+        sampler = self.sample_config.sampler
 
         # -------------------------
         # d_idx = first half 0s, second half 1s
@@ -240,25 +249,33 @@ class UNetTrainer:
 
         # -- DDPM
         if sampler.lower() == "ddpm":
-            unet_samples = unet_ddpm_loop(model, x_ref, d_emb, self.sched)
+            model_samples = unet_ddpm_loop(model, x_ref, d_emb, self.sched)
             ema_samples  = unet_ddpm_loop(self.ema_model, x_ref, d_emb, self.sched)
         # -- DDIM
         elif sampler.lower() == "ddim":
-            num_steps = self.log_config.sample.ddim_steps
-            eta = self.log_config.sample.eta
-            unet_samples = unet_ddim_loop(model, x_ref, d_emb, self.sched, num_steps, eta)
+            num_steps = self.sample_config.ddim_steps
+            eta = self.sample_config.eta
+            model_samples = unet_ddim_loop(model, x_ref, d_emb, self.sched, num_steps, eta)
             ema_samples  = unet_ddim_loop(self.ema_model, x_ref, d_emb, self.sched, num_steps, eta)
         else:
             raise ValueError("Sampler must be 'ddpm' or 'ddim'.")
         
+        # -- Put model back in train mode
         model.train()
 
-        unet_out_path = fig_dir / f"step{step}_unet.png"
-        ema_out_path  = fig_dir / f"step{step}_ema.png"
-        unet_grid = self.save_samples(unet_samples, unet_out_path)
+        samples_path = fig_dir / f"step-{step}"
+        samples_path.mkdir(parents=True, exist_ok=True)
+
+        model_out_path = samples_path / "model.png"
+        ema_out_path  = samples_path / "ema.png"
+
+        model_grid = self.save_samples(model_samples, model_out_path)
         ema_grid  = self.save_samples(ema_samples, ema_out_path)
 
-        self.writer.add_image("figs/unet_samples", unet_grid, step)
+        # -------------------------
+        # Log samples to tensorboard
+        # -------------------------
+        self.writer.add_image("figs/model_samples", model_grid, step)
         self.writer.add_image("figs/ema_samples", ema_grid, step)
         self.writer.add_scalar("train/epoch", epoch, step)
         

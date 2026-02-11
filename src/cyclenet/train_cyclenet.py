@@ -1,15 +1,15 @@
 import os
 import copy
 import argparse
+import numpy as np
 import torch
 import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
 from pathlib import Path
-from torch.utils.data import DataLoader
-from torch.utils.data.distributed import DistributedSampler
+from torch.utils.data import DataLoader, ConcatDataset
 from omegaconf import OmegaConf, DictConfig
 
-from cyclenet.data import CycleNetDataset, SourceDataset
+from cyclenet.data import CycleDomainDataset, SourceDataset, DomainSampler, load_cyclenet_transforms
 from cyclenet.diffusion import DiffusionSchedule
 from cyclenet.models import CycleNet, UNet, ControlNet
 from cyclenet.models.conditioning import DomainEmbedding
@@ -45,6 +45,36 @@ def save_config(config: DictConfig, save_path: str):
     OmegaConf.save(config, save_path)
 
 
+def make_adamw_param_groups(model: CycleNet, weight_decay: float):
+    """
+    Sets all CycleNet normalization / bias parameters to have no weight decay
+    """
+    decay, no_decay = [], []
+
+    for name, p in model.named_parameters():
+        if not p.requires_grad:
+            continue
+
+        n = name.lower()
+        is_bias = n.endswith("bias")
+        is_norm = (
+            "norm" in n
+            or "groupnorm" in n
+            or n.endswith("gn.weight")
+            or n.endswith("gn.bias")
+        )
+
+        if is_bias or is_norm:
+            no_decay.append(p)
+        else:
+            decay.append(p)
+
+    return [
+        {"params": decay, "weight_decay": weight_decay},
+        {"params": no_decay, "weight_decay": 0.0},
+    ]
+
+
 def main():
     # -------------------------
     # Parse args / load training config
@@ -52,6 +82,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=str, required=True)
     args = parser.parse_args()
+
     config = load_config(args.config)
 
     # -------------------------
@@ -70,34 +101,52 @@ def main():
     device = torch.device(f"cuda:{local_rank}" if torch.cuda.is_available() else "cpu")
 
     # -------------------------
-    # Create training dirs / save config
+    # Set seeds
+    # -------------------------
+    seed = int(config.run.seed) if config.run.seed is not None else 0
+
+    torch.manual_seed(seed + rank)
+    torch.cuda.manual_seed_all(seed + rank)
+    np.random.seed(seed + rank)
+
+    # -------------------------
+    # Create training dir / save config
     # -------------------------
     train_dir = Path(config.run.runs_dir, config.run.name, "training")
     if is_main:
         train_dir.mkdir(parents=True, exist_ok=True)
-        (train_dir / "checkpoints").mkdir(parents=True, exist_ok=True)
-        (train_dir / "figs").mkdir(parents=True, exist_ok=True)
+        save_config(config, train_dir / "config.yaml")
+
     if is_ddp:
         dist.barrier()
 
     # -------------------------
-    # Training Dataset / DistributedSampler
+    # Balanced DomainDatasets
     # -------------------------
-    dataset = CycleNetDataset(config.data.src_dir, config.data.tgt_dir, image_size=config.data.image_size)
+    rank_batch_size = config.train.batch_size // world_size
 
-    sampler = DistributedSampler(
-        dataset,
-        num_replicas=world_size,
+    transforms = load_cyclenet_transforms(config.data.transform_id, config.data.image_size)
+
+    # -- Create real / sim datasets + concatenate [real, sim]
+    real_ds = CycleDomainDataset(config.data.tgt_dir, domain_idx=1, transforms=transforms)
+    sim_ds  = CycleDomainDataset(config.data.src_dir, domain_idx=0, transforms=transforms)
+
+    dataset = ConcatDataset([real_ds, sim_ds])
+
+    # -- Create DomainSampler to balance real / sim samples
+    batch_sampler = DomainSampler(
+        n_real=len(real_ds),
+        n_sim=len(sim_ds),
+        batch_size=rank_batch_size,
         rank=rank,
+        world_size=world_size,
         shuffle=True,
-        drop_last=True,
-    ) if is_ddp else None
+        seed=seed,
+    )
 
     dataloader = DataLoader(
         dataset,
-        batch_size=config.train.batch_size // world_size,
-        sampler=sampler,
-        shuffle=(sampler is None),
+        batch_sampler=batch_sampler,
         num_workers=8,
         pin_memory=True,
         persistent_workers=True,
@@ -171,27 +220,27 @@ def main():
         p.requires_grad_(False)
 
     # -------------------------
+    # Create Optimizer 
+    # -------------------------
+    param_groups = make_adamw_param_groups(model, config.train.weight_decay)
+
+    optimizer = torch.optim.AdamW(param_groups, lr=config.train.lr)
+
+    # -------------------------
     # Resume Training
     # -------------------------
     start_step = 1
+    start_epoch = 1
+
     if config.run.resume.enable:
         ckpt_path = train_dir / "checkpoints" / config.run.resume.ckpt_name
-        if is_main:
-            ckpt = torch.load(str(ckpt_path), map_location="cpu")
-            model.load_state_dict(ckpt["model"])
-            ema_model.load_state_dict(ckpt["ema_model"])
-            start_step = int(ckpt["step"]) + 1
 
-        if is_ddp:
-            dist.barrier()
-            for p in model.parameters():
-                dist.broadcast(p.data, src=0)
-            for p in ema_model.parameters():
-                dist.broadcast(p.data, src=0)
-            # -- Broadcast start_step
-            t = torch.tensor([start_step], device=device, dtype=torch.long)
-            dist.broadcast(t, src=0)
-            start_step = int(t.item())
+        ckpt = torch.load(str(ckpt_path), map_location="cpu")
+        model.load_state_dict(ckpt["model"])
+        ema_model.load_state_dict(ckpt["ema_model"])
+        optimizer.load_state_dict(ckpt["optimizer"])
+        start_step = int(ckpt["step"]) + 1
+        start_epoch = int(ckpt["epoch"]) + 1
     
     # -------------------------
     # Create DiffusionSchedule
@@ -203,16 +252,6 @@ def main():
         beta_end=unet_config.diffusion.beta_end,
         device=device,
         s=unet_config.diffusion.s
-    )
-
-    # -------------------------
-    # Create Optimizer 
-    # -------------------------
-    trainable_params = [p for p in model.parameters() if p.requires_grad]
-    optimizer = torch.optim.AdamW(
-        params=trainable_params, 
-        lr=config.train.lr, 
-        weight_decay=config.train.weight_decay
     )
 
     # -------------------------
@@ -241,7 +280,8 @@ def main():
         cycle_weight=config.model.cycle_weight,
         consis_weight=config.model.consis_weight,
         invar_weight=config.model.invar_weight,
-        start_step=start_step
+        start_step=start_step,
+        start_epoch=start_epoch,
     )
 
     try:
