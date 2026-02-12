@@ -102,21 +102,15 @@ class UNetTrainer:
                 # -------------------------
                 # Log loss / save checkpoint / generate samples
                 # -------------------------
-                if self.is_main and step % self.log_config.loss_interval == 0:
-                    self.log_loss("train/batch_loss", loss.item(), step)
+                if self.is_main:
+                    if step % self.log_config.loss_interval == 0:
+                        self.log_loss("train/batch_loss", loss.item(), step)
 
-                if self.is_main and step % self.log_config.ckpt_interval == 0:
-                    self.save_checkpoint(step, epoch)
+                    if step % self.log_config.ckpt_interval == 0:
+                        self.save_checkpoint(step, epoch)
 
-                if dist.is_initialized():
-                    dist.barrier()
-
-                # -- Generate samples on all gpus to avoid timeout
-                if step % self.log_config.sample_interval == 0:
-                    self.generate_samples(step)
-
-                if dist.is_initialized():
-                    dist.barrier()
+                    if step % self.log_config.sample_interval == 0:
+                        self.generate_samples(step)
 
                 epoch_loss += loss.item()
                 num_batches += 1

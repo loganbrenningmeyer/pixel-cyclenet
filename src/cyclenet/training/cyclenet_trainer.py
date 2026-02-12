@@ -8,6 +8,7 @@ import torch.distributed as dist
 from torch.amp import GradScaler, autocast
 from torchvision.utils import save_image, make_grid
 from tqdm import tqdm
+from collections import deque
 
 from cyclenet.models import CycleNet
 from cyclenet.models.utils import unwrap
@@ -23,7 +24,7 @@ class CycleNetTrainer:
         sched: DiffusionSchedule,
         optimizer: Optimizer,
         dataloader: DataLoader,
-        sample_loader: DataLoader,
+        sample_loader: DataLoader | None,
         device: torch.device,
         train_dir: str,
         log_config: DictConfig,
@@ -43,7 +44,7 @@ class CycleNetTrainer:
         self.optimizer = optimizer
         self.dataloader = dataloader
         self.sample_loader = sample_loader
-        self.sample_iter = iter(sample_loader)
+        self.sample_iter = iter(sample_loader) if sample_loader is not None else None
         self.device = device
         self.log_config = log_config
         self.sample_config = sample_config
@@ -57,6 +58,13 @@ class CycleNetTrainer:
         self.cycle_weight = cycle_weight
         self.consis_weight = consis_weight
         self.invar_weight = invar_weight
+
+        # -- Track running averages of losses
+        self._recon_hist = deque(maxlen=100)
+        self._cycle_hist = deque(maxlen=100)
+        self._consis_hist = deque(maxlen=100)
+        self._invar_hist = deque(maxlen=100)
+        self._total_hist = deque(maxlen=100)
 
         # -- Create directories
         self.train_dir = Path(train_dir)
@@ -112,21 +120,19 @@ class CycleNetTrainer:
                 # -------------------------
                 # Log loss / save checkpoint / generate samples
                 # -------------------------
-                if self.is_main and step % self.log_config.loss_interval == 0:
-                    self.log_loss("train/batch_loss", loss_dict, step)
+                if self.is_main:
+                    # -- Track running averages of weighted individual losses & total loss
+                    self.update_running_losses(loss_dict, loss)
 
-                if self.is_main and step % self.log_config.ckpt_interval == 0:
-                    self.save_checkpoint(step, epoch)
+                    if step % self.log_config.loss_interval == 0:
+                        self.log_loss("train/batch_loss", loss_dict, loss, step)
+                        self.log_running_losses(step)
 
-                if dist.is_initialized():
-                    dist.barrier()
+                    if step % self.log_config.ckpt_interval == 0:
+                        self.save_checkpoint(step, epoch)
 
-                # -- Generate samples on all gpus to avoid timeout
-                if step % self.log_config.sample_interval == 0:
-                    self.generate_samples(step)
-
-                if dist.is_initialized():
-                    dist.barrier()
+                    if step % self.log_config.sample_interval == 0:
+                        self.generate_samples(step)
 
                 epoch_loss += loss.item()
                 num_batches += 1
@@ -147,7 +153,12 @@ class CycleNetTrainer:
             self.writer.flush()
             self.writer.close()
 
-    def train_step(self, x_0: torch.Tensor, src_idx: torch.Tensor, tgt_idx: torch.Tensor) -> torch.Tensor:
+    def train_step(
+        self, 
+        x_0: torch.Tensor, 
+        src_idx: torch.Tensor, 
+        tgt_idx: torch.Tensor
+    ) -> tuple[dict[str, torch.Tensor], torch.Tensor]:
         """
         
         """
@@ -211,7 +222,7 @@ class CycleNetTrainer:
         for p_ema, p_model in zip(self.ema_model.parameters(), unwrap(self.model).parameters()):
             p_ema.mul_(self.ema_decay).add_(p_model, alpha=1.0 - self.ema_decay)        
 
-    def log_loss(self, label: str, loss_dict: dict[str, torch.Tensor], step: int):
+    def log_loss(self, label: str, loss_dict: dict[str, torch.Tensor], loss: torch.Tensor, step: int):
         """
         Logs loss to tensorboard
         """
@@ -221,7 +232,8 @@ class CycleNetTrainer:
         self.writer.add_scalar(f"{label}/recon", self.recon_weight * loss_dict["recon"].item(), step)
         self.writer.add_scalar(f"{label}/cycle", self.cycle_weight * loss_dict["cycle"].item(), step)
         self.writer.add_scalar(f"{label}/consis", self.consis_weight * loss_dict["consis"].item(), step)
-        self.writer.add_scalar(f"{label}/invar", self.invar_weight * loss_dict["invar"].item(), step)     
+        self.writer.add_scalar(f"{label}/invar", self.invar_weight * loss_dict["invar"].item(), step)  
+        self.writer.add_scalar(f"{label}/total", loss.item(), step)   
 
     def save_checkpoint(self, step: int, epoch: int):
         """
@@ -266,7 +278,6 @@ class CycleNetTrainer:
         # -------------------------
         samples_dir = Path(self.train_dir) / "figs" / f"step-{step}"
         samples_dir.mkdir(parents=True, exist_ok=True)
-
 
         if self.is_main:
             x_src_grid = self.save_samples(x_src, samples_dir / "x_src.png")
@@ -346,8 +357,11 @@ class CycleNetTrainer:
                 strength_str = f"strength-{noise_strength:.2f}"
                 
                 if self.is_main:
-                    model_grid = self.save_samples(model_samples, samples_dir / strength_str / cfg_str / "model.png")
-                    ema_grid = self.save_samples(ema_samples, samples_dir / strength_str / cfg_str / "ema.png")
+                    out_dir = samples_dir / strength_str / cfg_str
+                    out_dir.mkdir(parents=True, exist_ok=True)
+
+                    model_grid = self.save_samples(model_samples, out_dir/ "model.png")
+                    ema_grid = self.save_samples(ema_samples, out_dir / "ema.png")
                     self.writer.add_image(f"figs/model/{strength_str}_{cfg_str}", model_grid, step)
                     self.writer.add_image(f"figs/ema/{strength_str}_{cfg_str}", ema_grid, step)
 
@@ -371,9 +385,28 @@ class CycleNetTrainer:
         return grid
     
     def _next_sample_batch(self):
+        if not self.is_main or self.sample_iter is None:
+            return None
+
         try:
             x_src = next(self.sample_iter)
+
         except StopIteration:
             self.sample_iter = iter(self.sample_loader)
             x_src = next(self.sample_iter)
+            
         return x_src.to(self.device, non_blocking=True)
+
+    def update_running_losses(self, loss_dict: dict[str, torch.Tensor], loss: torch.Tensor):
+        self._recon_hist.append(self.recon_weight * loss_dict["recon"].item())
+        self._cycle_hist.append(self.cycle_weight * loss_dict["cycle"].item())
+        self._consis_hist.append(self.consis_weight * loss_dict["consis"].item())
+        self._invar_hist.append(self.invar_weight * loss_dict["invar"].item())
+        self._total_hist.append(loss.item())
+
+    def log_running_losses(self, step: int):
+        self.writer.add_scalar("train/running_loss/recon", sum(self._recon_hist) / len(self._recon_hist), step)
+        self.writer.add_scalar("train/running_loss/cycle", sum(self._cycle_hist) / len(self._cycle_hist), step)
+        self.writer.add_scalar("train/running_loss/consis", sum(self._consis_hist) / len(self._consis_hist), step)
+        self.writer.add_scalar("train/running_loss/invar", sum(self._invar_hist) / len(self._invar_hist), step)
+        self.writer.add_scalar("train/running_loss/total", sum(self._total_hist) / len(self._total_hist), step)

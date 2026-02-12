@@ -24,12 +24,20 @@ def ddp_setup():
     Returns: (is_ddp, rank, local_rank, world_size)
     """
     if "RANK" in os.environ and "WORLD_SIZE" in os.environ:
-        dist.init_process_group(backend="nccl")
         rank = int(os.environ["RANK"])
         local_rank = int(os.environ["LOCAL_RANK"])
         world_size = int(os.environ["WORLD_SIZE"])
+
         torch.cuda.set_device(local_rank)
+        dist.init_process_group(
+            backend="nccl",
+            rank=rank,
+            world_size=world_size,
+            device_id=local_rank,
+        )
+
         return True, rank, local_rank, world_size
+    
     return False, 0, 0, 1
 
 
@@ -157,14 +165,17 @@ def main():
     # Source Samples Dataset / DataLoader (only main rank)
     # -------------------------
     sample_dataset = SourceDataset(config.data.src_dir, image_size=config.data.image_size)
-    sample_loader = DataLoader(
-        sample_dataset,
-        batch_size=config.sampling.num_samples,
-        shuffle=True,
-        num_workers=2,
-        pin_memory=True,
-        drop_last=True
-    )
+
+    sample_loader = None
+    if is_main:
+        sample_loader = DataLoader(
+            sample_dataset,
+            batch_size=config.sampling.num_samples,
+            shuffle=True,
+            num_workers=2,
+            pin_memory=True,
+            drop_last=True
+        )
 
     # -------------------------
     # Load UNet Backbone / DomainEmbedding
@@ -249,7 +260,7 @@ def main():
     # -------------------------
     if is_ddp:
         model = DDP(model, device_ids=[local_rank], output_device=local_rank, broadcast_buffers=False)
-
+        
         # -- Only sync EMA on new training runs
         if not config.run.resume.enable:
             for p_ema, p_model in zip(ema_model.parameters(), unwrap(model).parameters()):
