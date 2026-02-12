@@ -9,11 +9,12 @@ from pathlib import Path
 from torch.utils.data import DataLoader, ConcatDataset
 from omegaconf import OmegaConf, DictConfig
 
+from cyclenet.training import UNetTrainer
 from cyclenet.data import DomainDataset, DomainSampler, load_unet_transforms
 from cyclenet.diffusion import DiffusionSchedule
 from cyclenet.models import UNet
 from cyclenet.models.conditioning import DomainEmbedding
-from cyclenet.training import UNetTrainer
+from cyclenet.models.utils import unwrap
 
 
 def ddp_setup():
@@ -215,12 +216,17 @@ def main():
         s=config.diffusion.s,
     )
 
-    # ----------
-    # Wrap UNet / DomainEmbedding in DDP
-    # ----------
+    # -------------------------
+    # Wrap UNet & DomainEmbedding in DDP / sync EMA model
+    # -------------------------
     if is_ddp:
         model = DDP(model, device_ids=[local_rank], output_device=local_rank, broadcast_buffers=False)
         domain_emb = DDP(domain_emb, device_ids=[local_rank], output_device=local_rank, broadcast_buffers=False)
+
+        # -- Only sync EMA on new training runs
+        if not config.run.resume.enable:
+            for p_ema, p_model in zip(ema_model.parameters(), unwrap(model).parameters()):
+                p_ema.data.copy_(p_model.data)
 
     # -------------------------
     # Create UNetTrainer / run training

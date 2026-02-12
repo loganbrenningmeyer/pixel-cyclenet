@@ -9,11 +9,12 @@ from pathlib import Path
 from torch.utils.data import DataLoader, ConcatDataset
 from omegaconf import OmegaConf, DictConfig
 
+from cyclenet.training import CycleNetTrainer
 from cyclenet.data import CycleDomainDataset, SourceDataset, DomainSampler, load_cyclenet_transforms
 from cyclenet.diffusion import DiffusionSchedule
 from cyclenet.models import CycleNet, UNet, ControlNet
 from cyclenet.models.conditioning import DomainEmbedding
-from cyclenet.training import CycleNetTrainer
+from cyclenet.models.utils import unwrap
 
 
 def ddp_setup():
@@ -155,17 +156,15 @@ def main():
     # -------------------------
     # Source Samples Dataset / DataLoader (only main rank)
     # -------------------------
-    sample_loader = None
-    if is_main:
-        sample_dataset = SourceDataset(config.data.src_dir, image_size=config.data.image_size)
-        sample_loader = DataLoader(
-            sample_dataset,
-            batch_size=config.sampling.num_samples,
-            shuffle=True,
-            num_workers=2,
-            pin_memory=True,
-            drop_last=True
-        )
+    sample_dataset = SourceDataset(config.data.src_dir, image_size=config.data.image_size)
+    sample_loader = DataLoader(
+        sample_dataset,
+        batch_size=config.sampling.num_samples,
+        shuffle=True,
+        num_workers=2,
+        pin_memory=True,
+        drop_last=True
+    )
 
     # -------------------------
     # Load UNet Backbone / DomainEmbedding
@@ -186,18 +185,9 @@ def main():
 
     domain_emb = DomainEmbedding(d_dim=unet_config.model.d_dim).to(device)
 
-    # -- DDP broadcast loaded models
-    if is_main:
-        ckpt = torch.load(str(unet_ckpt_path), map_location="cpu")
-        backbone.load_state_dict(ckpt["ema_model"])
-        domain_emb.load_state_dict(ckpt["domain_emb"])
-
-    if is_ddp:
-        dist.barrier()
-        for p in backbone.parameters():
-            dist.broadcast(p.data, src=0)
-        for p in domain_emb.parameters():
-            dist.broadcast(p.data, src=0)
+    ckpt = torch.load(str(unet_ckpt_path), map_location="cpu")
+    backbone.load_state_dict(ckpt["ema_model"])
+    domain_emb.load_state_dict(ckpt["domain_emb"])
 
     # -------------------------
     # Initialize ControlNet
@@ -255,10 +245,15 @@ def main():
     )
 
     # -------------------------
-    # Wrap CycleNet in DDP
+    # Wrap CycleNet in DDP / sync EMA model
     # -------------------------
     if is_ddp:
         model = DDP(model, device_ids=[local_rank], output_device=local_rank, broadcast_buffers=False)
+
+        # -- Only sync EMA on new training runs
+        if not config.run.resume.enable:
+            for p_ema, p_model in zip(ema_model.parameters(), unwrap(model).parameters()):
+                p_ema.data.copy_(p_model.data)
 
     # -------------------------
     # Create CycleNetTrainer / Run training

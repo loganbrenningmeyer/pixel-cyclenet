@@ -10,8 +10,9 @@ from torchvision.utils import save_image, make_grid
 from tqdm import tqdm
 
 from cyclenet.models import UNet
+from cyclenet.models.utils import unwrap
 from cyclenet.models.conditioning import DomainEmbedding
-from cyclenet.diffusion import *
+from cyclenet.diffusion import DiffusionSchedule, unet_ddpm_loop, unet_ddim_loop
 from cyclenet.diffusion.losses import unet_loss
 
 
@@ -73,12 +74,12 @@ class UNetTrainer:
         step = self.start_step
         epoch = self.start_epoch
 
-        while step < steps:
+        while step <= steps:
             self.model.train()
 
-            # ----------
+            # -------------------------
             # Set DomainSampler epoch
-            # ----------
+            # -------------------------
             if hasattr(self.dataloader.batch_sampler, "set_epoch"):
                 self.dataloader.batch_sampler.set_epoch(epoch)
 
@@ -89,7 +90,7 @@ class UNetTrainer:
             num_batches = 0
 
             for x_0, d_idx in tqdm(self.dataloader, desc=f"Epoch {epoch}, Step {step}", unit="Batch"):
-                if step >= steps:
+                if step > steps:
                     break
 
                 # -------------------------
@@ -98,16 +99,22 @@ class UNetTrainer:
                 x_0, d_idx = x_0.to(self.device), d_idx.to(self.device)
                 loss = self.train_step(x_0, d_idx)
 
+                # -------------------------
+                # Log loss / save checkpoint / generate samples
+                # -------------------------
                 if self.is_main and step % self.log_config.loss_interval == 0:
-                    self.log_loss("train/batch_loss", loss.item(), step, epoch)
+                    self.log_loss("train/batch_loss", loss.item(), step)
 
                 if self.is_main and step % self.log_config.ckpt_interval == 0:
                     self.save_checkpoint(step, epoch)
+
                 if dist.is_initialized():
                     dist.barrier()
 
-                if self.is_main and step % self.log_config.sample_interval == 0:
-                    self.generate_samples(step, epoch)
+                # -- Generate samples on all gpus to avoid timeout
+                if step % self.log_config.sample_interval == 0:
+                    self.generate_samples(step)
+
                 if dist.is_initialized():
                     dist.barrier()
 
@@ -119,8 +126,10 @@ class UNetTrainer:
             # Log average epoch loss
             # -------------------------
             epoch_loss /= num_batches
+
             if self.is_main:
                 print(f"Epoch {epoch} Average Loss: {epoch_loss}")
+                self.writer.add_scalar("train/epoch", epoch, step)
 
             epoch += 1
 
@@ -188,19 +197,22 @@ class UNetTrainer:
         for p_ema, p_model in zip(self.ema_model.parameters(), unwrap(self.model).parameters()):
             p_ema.mul_(self.ema_decay).add_(p_model, alpha=1.0 - self.ema_decay)
 
-    def log_loss(self, label: str, loss: float, step: int, epoch: int):
+    def log_loss(self, label: str, loss: float, step: int):
         """
         Logs loss to tensorboard
         """
-        if self.writer is None:
+        if not self.is_main:
             return
+        
         self.writer.add_scalar(label, loss, step)
-        self.writer.add_scalar("train/epoch", epoch, step)
 
     def save_checkpoint(self, step: int, epoch: int):
         """
         Saves model checkpoint (model, EMA, DomainEmbedding)
         """
+        if not self.is_main:
+            return
+
         ckpt_path = Path(self.train_dir) / "checkpoints" / f"step-{step}.ckpt"
 
         torch.save({
@@ -213,10 +225,7 @@ class UNetTrainer:
         }, ckpt_path)
 
     @torch.no_grad()
-    def generate_samples(self, step: int, epoch: int):
-        if not self.is_main or self.writer is None:
-            return
-
+    def generate_samples(self, step: int):
         model = unwrap(self.model)
         domain_emb = unwrap(self.domain_emb)
 
@@ -260,24 +269,24 @@ class UNetTrainer:
         else:
             raise ValueError("Sampler must be 'ddpm' or 'ddim'.")
         
-        # -- Put model back in train mode
-        model.train()
-
+        # -------------------------
+        # Save samples / log to tensorboard
+        # -------------------------
         samples_path = fig_dir / f"step-{step}"
         samples_path.mkdir(parents=True, exist_ok=True)
 
-        model_out_path = samples_path / "model.png"
-        ema_out_path  = samples_path / "ema.png"
+        if self.is_main:
+            model_out_path = samples_path / "model.png"
+            ema_out_path  = samples_path / "ema.png"
+            
+            model_grid = self.save_samples(model_samples, model_out_path)
+            ema_grid  = self.save_samples(ema_samples, ema_out_path)
 
-        model_grid = self.save_samples(model_samples, model_out_path)
-        ema_grid  = self.save_samples(ema_samples, ema_out_path)
+            self.writer.add_image("figs/model_samples", model_grid, step)
+            self.writer.add_image("figs/ema_samples", ema_grid, step)
 
-        # -------------------------
-        # Log samples to tensorboard
-        # -------------------------
-        self.writer.add_image("figs/model_samples", model_grid, step)
-        self.writer.add_image("figs/ema_samples", ema_grid, step)
-        self.writer.add_scalar("train/epoch", epoch, step)
+        # -- Put model back in train mode
+        model.train()
         
     def save_samples(self, samples: torch.Tensor, out_path: str):
         # -------------------------
@@ -287,7 +296,3 @@ class UNetTrainer:
         grid = make_grid(x_vis, nrow=4)
         save_image(grid, out_path)
         return grid
-    
-
-def unwrap(m):
-    return m.module if hasattr(m, "module") else m

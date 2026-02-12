@@ -86,7 +86,7 @@ def cyclenet_loss(
         t=t, 
         from_idx=src_idx,
         to_idx=src_idx,
-        c_img=x_0_ctrl
+        c_img=x_0_ctrl,
     )
 
     recon_loss = F.mse_loss(eps_xt_x2x_x0, eps_x)
@@ -98,12 +98,13 @@ def cyclenet_loss(
     # Compute x->y translation eps with disabled UNet gradients
     # => \epsilon_\theta(x_t, c_{x \to y}, x_0)
     # -------------------------
-    eps_xt_x2y_x0 = model.forward_ctrl_grad_only(
+    eps_xt_x2y_x0 = model.forward(
         x_t=x_t, 
         t=t, 
         from_idx=src_idx,
         to_idx=tgt_idx,
-        c_img=x_0_ctrl
+        c_img=x_0_ctrl,
+        no_unet_grad=True,
     )
 
     # -- Predict clean y_0 / detached y_0 for c_img conditioning
@@ -122,7 +123,7 @@ def cyclenet_loss(
         t=t,
         from_idx=tgt_idx,
         to_idx=src_idx,
-        c_img=y_0_cond
+        c_img=y_0_cond,
     )
 
     cycle_loss = F.mse_loss((eps_xt_x2y_x0.detach() + eps_yt_y2x_y0), (eps_x + eps_y))
@@ -137,7 +138,7 @@ def cyclenet_loss(
         t=t,
         from_idx=src_idx,
         to_idx=src_idx,
-        c_img=x_0_ctrl
+        c_img=x_0_ctrl,
     )
 
     consis_loss = F.mse_loss((eps_xt_x2y_x0.detach() + eps_yt_x2x_x0), (eps_x + eps_y))
@@ -152,7 +153,7 @@ def cyclenet_loss(
         t=t,
         from_idx=tgt_idx,
         to_idx=tgt_idx,
-        c_img=y_0_cond
+        c_img=y_0_cond,
     )
 
     invar_loss = F.mse_loss(eps_xt_x2y_x0, eps_xt_y2y_y0.detach())

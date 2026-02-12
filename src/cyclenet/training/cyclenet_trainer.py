@@ -6,12 +6,12 @@ from torch.optim import Optimizer
 from torch.utils.tensorboard import SummaryWriter
 import torch.distributed as dist
 from torch.amp import GradScaler, autocast
-import torch.distributed as dist
 from torchvision.utils import save_image, make_grid
 from tqdm import tqdm
 
 from cyclenet.models import CycleNet
-from cyclenet.diffusion import *
+from cyclenet.models.utils import unwrap
+from cyclenet.diffusion import DiffusionSchedule, cyclenet_ddpm_loop, cyclenet_ddim_loop
 from cyclenet.diffusion.losses import cyclenet_loss
 
 
@@ -43,7 +43,7 @@ class CycleNetTrainer:
         self.optimizer = optimizer
         self.dataloader = dataloader
         self.sample_loader = sample_loader
-        self.sample_iter = iter(sample_loader) if sample_loader is not None else None
+        self.sample_iter = iter(sample_loader)
         self.device = device
         self.log_config = log_config
         self.sample_config = sample_config
@@ -84,41 +84,47 @@ class CycleNetTrainer:
         step = self.start_step
         epoch = self.start_epoch
 
-        while step < steps:
+        while step <= steps:
             self.model.train()
 
-            # ----------
+            # -------------------------
             # Set DomainSampler epoch
-            # ----------
+            # -------------------------
             if hasattr(self.dataloader.batch_sampler, "set_epoch"):
                 self.dataloader.batch_sampler.set_epoch(epoch)
 
-            # ----------
+            # -------------------------
             # Run training epoch
-            # ----------
+            # -------------------------
             epoch_loss = 0.0
             num_batches = 0
 
             for x_0, src_idx, tgt_idx in tqdm(self.dataloader, desc=f"Epoch {epoch}, Step {step}", unit="Batch"):
-                if step >= steps:
+                if step > steps:
                     break
 
-                # ----------
+                # -------------------------
                 # Perform train step
-                # ----------
+                # -------------------------
                 x_0, src_idx, tgt_idx = x_0.to(self.device), src_idx.to(self.device), tgt_idx.to(self.device)
                 loss_dict, loss = self.train_step(x_0, src_idx, tgt_idx)
 
+                # -------------------------
+                # Log loss / save checkpoint / generate samples
+                # -------------------------
                 if self.is_main and step % self.log_config.loss_interval == 0:
-                    self.log_loss("train/batch_loss", loss_dict, step, epoch)
+                    self.log_loss("train/batch_loss", loss_dict, step)
 
                 if self.is_main and step % self.log_config.ckpt_interval == 0:
                     self.save_checkpoint(step, epoch)
+
                 if dist.is_initialized():
                     dist.barrier()
 
-                if self.is_main and step % self.log_config.sample_interval == 0:
-                    self.generate_samples(step, epoch)
+                # -- Generate samples on all gpus to avoid timeout
+                if step % self.log_config.sample_interval == 0:
+                    self.generate_samples(step)
+
                 if dist.is_initialized():
                     dist.barrier()
 
@@ -126,21 +132,20 @@ class CycleNetTrainer:
                 num_batches += 1
                 step += 1
 
-            # ----------
+            # -------------------------
             # Log average epoch loss
-            # ----------
-            if num_batches > 0:
-                epoch_loss /= num_batches
+            # -------------------------
+            epoch_loss /= num_batches
 
             if self.is_main:
                 print(f"Epoch {epoch} Average Loss: {epoch_loss}")
+                self.writer.add_scalar("train/epoch", epoch, step)
 
             epoch += 1
 
         if self.writer is not None:
             self.writer.flush()
             self.writer.close()
-
 
     def train_step(self, x_0: torch.Tensor, src_idx: torch.Tensor, tgt_idx: torch.Tensor) -> torch.Tensor:
         """
@@ -149,15 +154,15 @@ class CycleNetTrainer:
         self.optimizer.zero_grad()
 
         with autocast(device_type="cuda"):
-            # ----------
+            # -------------------------
             # Sample batch of timesteps
-            # ----------
+            # -------------------------
             B = x_0.shape[0]
             t = torch.randint(0, self.sched.T, (B,), device=self.device)
 
-            # ----------
+            # -------------------------
             # Noise / forward / compute loss
-            # ----------
+            # -------------------------
             loss_dict = cyclenet_loss(
                 model=self.model, 
                 x_0=x_0, 
@@ -206,23 +211,25 @@ class CycleNetTrainer:
         for p_ema, p_model in zip(self.ema_model.parameters(), unwrap(self.model).parameters()):
             p_ema.mul_(self.ema_decay).add_(p_model, alpha=1.0 - self.ema_decay)        
 
-    def log_loss(self, label: str, loss_dict: dict[str, torch.Tensor], step: int, epoch: int):
+    def log_loss(self, label: str, loss_dict: dict[str, torch.Tensor], step: int):
         """
         Logs loss to tensorboard
         """
-        if self.writer is None:
+        if not self.is_main or self.writer is None:
             return
         
         self.writer.add_scalar(f"{label}/recon", self.recon_weight * loss_dict["recon"].item(), step)
         self.writer.add_scalar(f"{label}/cycle", self.cycle_weight * loss_dict["cycle"].item(), step)
         self.writer.add_scalar(f"{label}/consis", self.consis_weight * loss_dict["consis"].item(), step)
-        self.writer.add_scalar(f"{label}/invar", self.invar_weight * loss_dict["invar"].item(), step)
-        self.writer.add_scalar("train/epoch", epoch, step)       
+        self.writer.add_scalar(f"{label}/invar", self.invar_weight * loss_dict["invar"].item(), step)     
 
     def save_checkpoint(self, step: int, epoch: int):
         """
         Saves model checkpoint (model, EMA, DomainEmbedding)
         """
+        if not self.is_main:
+            return
+
         ckpt_path = Path(self.train_dir) / "checkpoints" / f"step-{step}.ckpt"
 
         torch.save({
@@ -234,13 +241,10 @@ class CycleNetTrainer:
         }, ckpt_path)
 
     @torch.no_grad()
-    def generate_samples(self, step: int, epoch: int):
+    def generate_samples(self, step: int):
         """
         Generates CycleNet translation samples and saves to figs dir
         """
-        if not self.is_main or self.writer is None:
-            return
-        
         model = unwrap(self.model)
 
         model.eval()
@@ -263,11 +267,10 @@ class CycleNetTrainer:
         samples_dir = Path(self.train_dir) / "figs" / f"step-{step}"
         samples_dir.mkdir(parents=True, exist_ok=True)
 
-        x_src_grid = self.save_samples(x_src, samples_dir / "x_src.png")
-        self.writer.add_image("figs/x_src", x_src_grid, step)
 
-        # -- Track epoch
-        self.writer.add_scalar("train/epoch", epoch, step)
+        if self.is_main:
+            x_src_grid = self.save_samples(x_src, samples_dir / "x_src.png")
+            self.writer.add_image("figs/x_src", x_src_grid, step)
 
         # -------------------------
         # Generate samples for each noise strength / cfg_weight
@@ -342,17 +345,18 @@ class CycleNetTrainer:
                 cfg_str = f"cfg-{cfg_weight:.1f}"
                 strength_str = f"strength-{noise_strength:.2f}"
                 
-                model_grid = self.save_samples(model_samples, samples_dir / strength_str / cfg_str / "model.png")
-                ema_grid = self.save_samples(ema_samples, samples_dir / strength_str / cfg_str / "ema.png")
-
-                self.writer.add_image(f"figs/model/{strength_str}_{cfg_str}", model_grid, step)
-                self.writer.add_image(f"figs/ema/{strength_str}_{cfg_str}", ema_grid, step)
+                if self.is_main:
+                    model_grid = self.save_samples(model_samples, samples_dir / strength_str / cfg_str / "model.png")
+                    ema_grid = self.save_samples(ema_samples, samples_dir / strength_str / cfg_str / "ema.png")
+                    self.writer.add_image(f"figs/model/{strength_str}_{cfg_str}", model_grid, step)
+                    self.writer.add_image(f"figs/ema/{strength_str}_{cfg_str}", ema_grid, step)
 
             # -------------------------
             # Save / log noised source images
             # -------------------------
-            noise_grid = self.save_samples(x_noise, samples_dir / strength_str / "x_t.png")
-            self.writer.add_image(f"figs/x_t/{strength_str}", noise_grid, step)
+            if self.is_main:
+                noise_grid = self.save_samples(x_noise, samples_dir / strength_str / "x_t.png")
+                self.writer.add_image(f"figs/x_t/{strength_str}", noise_grid, step)
 
         # -- Put model back in train mode
         model.train()
@@ -367,15 +371,9 @@ class CycleNetTrainer:
         return grid
     
     def _next_sample_batch(self):
-        if self.sample_iter is None:
-            return None
         try:
             x_src = next(self.sample_iter)
         except StopIteration:
             self.sample_iter = iter(self.sample_loader)
             x_src = next(self.sample_iter)
         return x_src.to(self.device, non_blocking=True)
-
-
-def unwrap(m):
-    return m.module if hasattr(m, "module") else m
