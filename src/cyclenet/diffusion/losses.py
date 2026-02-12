@@ -94,9 +94,11 @@ def cyclenet_loss(
     # -------------------------
     # Cycle Loss
     # => L_\text{cycle} = \mathbb{E}_{x_0,\epsilon_x,\epsilon_y}\Vert \epsilon_\theta(x_t, c_{x \to y}, x_0) + \epsilon_\theta(y_t, c_{y \to x}, \bar y_0) - \epsilon_x - \epsilon_y \Vert_2^2
-    # -------------------------
+    #
+    # Compute x->y translation eps with disabled UNet gradients
     # => \epsilon_\theta(x_t, c_{x \to y}, x_0)
-    eps_xt_x2y_x0 = model.forward(
+    # -------------------------
+    eps_xt_x2y_x0 = model.forward_ctrl_grad_only(
         x_t=x_t, 
         t=t, 
         from_idx=src_idx,

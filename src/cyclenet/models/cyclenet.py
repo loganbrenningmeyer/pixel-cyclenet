@@ -97,3 +97,71 @@ class CycleNet(nn.Module):
 
         return h
         
+    def forward_ctrl_grad_only(
+        self,
+        x_t: torch.Tensor,
+        t: torch.Tensor,
+        from_idx: torch.Tensor,
+        to_idx: torch.Tensor,
+        c_img: torch.Tensor,
+    ) -> torch.Tensor:
+        """
+        Runs a forward pass with UNet Decoder / FinalLayer gradients disabled 
+        to only send gradients through the ControlNet
+        """
+        # -------------------------
+        # Get samples' domain embeddings / -> Context tokens
+        # -------------------------
+        from_emb = self.domain_emb(from_idx)
+        to_emb = self.domain_emb(to_idx)
+
+        # -------------------------
+        # ControlNet: (origin domain)
+        # -------------------------
+        ctrl_skips = self.control(x_t, t, c_img, from_emb)
+
+        # -------------------------
+        # UNet Backbone Encode: (destination domain)
+        # -------------------------
+        with torch.no_grad():
+            t_emb = sinusoidal_embedding(t, self.backbone.base_ch)
+            t_emb = self.backbone.t_mlp(t_emb)
+
+            to_ctx = to_emb.unsqueeze(1)
+
+            h, skips = self.backbone.encode(x_t, t_emb, to_emb, to_ctx)
+
+        # -------------------------
+        # Disable UNet backbone Decoder / FinalLayer gradients
+        # -------------------------
+        for p in self.backbone.decoder.parameters():
+            p.requires_grad_(False)
+        for p in self.backbone.final.parameters():
+            p.requires_grad_(False)
+
+        # -------------------------
+        # UNet Backbone Decode: Add UNet skips + ControlNet skips
+        # -------------------------
+        h = h + ctrl_skips.pop()
+
+        for dec_block in self.backbone.decoder:
+            skips_i = [skips.pop() for _ in range(dec_block.n_skips)]
+            skips_i = [s + ctrl_skips.pop() for s in skips_i]
+            h = dec_block(h, t_emb, to_emb, to_ctx, skips_i)
+
+        # -------------------------
+        # UNet Backbone FinalLayer
+        # -------------------------
+        h = self.backbone.final(h)
+
+        # -------------------------
+        # Re-enable UNet backbone Decoder / FinalLayer gradients
+        # -------------------------
+        for p in self.backbone.decoder.parameters():
+            p.requires_grad_(True)
+        for p in self.backbone.final.parameters():
+            p.requires_grad_(True)
+
+        return h
+
+        
