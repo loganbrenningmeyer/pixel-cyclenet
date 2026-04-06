@@ -94,6 +94,38 @@ def load_unet_transforms(transform_id: int = 0, image_size: int = 224) -> A.Comp
             ToTensorV2(),
         ])
     
+    # -------------------------
+    # [3]: Remote sensing augmentations
+    # -- Horizontal/Vertical flips and 90 degree rotations
+    #       * Remote sensing data is symmetric
+    # -- Mild RandomBrightnessContrast / RandomGamma
+    #       * Some slight jitter can help intra-real-domain generalization
+    #       * Real datasets are not identical in their characteristics
+    # -------------------------
+    elif transform_id == 3:
+        return A.Compose([
+            A.Resize(image_size, image_size, interpolation=cv2.INTER_LINEAR),
+
+            # -- Flips / 90 degree rotation
+            A.HorizontalFlip(p=0.5),
+            A.VerticalFlip(p=0.5),
+            A.RandomRotate90(p=0.5),
+
+            # -- Mild photometric
+            A.RandomBrightnessContrast(
+                brightness_limit=0.08,
+                contrast_limit=0.08,
+                p=0.35,
+            ),
+            A.RandomGamma(
+                gamma_limit=(92, 108),
+                p=0.25,
+            ),
+
+            A.Normalize(mean=mean, std=std),
+            ToTensorV2(),
+        ])
+    
     else:
         raise ValueError("transform_id must be 0, 1, or 2.")
     
@@ -140,6 +172,22 @@ def load_cyclenet_transforms(transform_id: int = 0, image_size: int = 224) -> A.
                 gamma_limit=(95, 105),
                 p=0.4,
             ),
+
+            A.Normalize(mean=mean, std=std),
+            ToTensorV2(),
+        ])
+    
+    # -------------------------
+    # [3]: Remote sensing augmentations
+    # -- Horizontal/Vertical flips and 90 degree rotations 
+    # -------------------------
+    elif transform_id == 3:
+        return A.Compose([
+            A.Resize(image_size, image_size, interpolation=cv2.INTER_LINEAR),
+
+            A.HorizontalFlip(p=0.5),
+            A.VerticalFlip(p=0.5),
+            A.RandomRotate90(p=0.5),
 
             A.Normalize(mean=mean, std=std),
             ToTensorV2(),

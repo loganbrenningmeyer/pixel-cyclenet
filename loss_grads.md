@@ -122,8 +122,7 @@ flowchart LR
 ## 2) Cycle Loss (`cycle_loss`)
 
 $$
-\mathcal{L}_{cycle} =
-\| \epsilon_{x\rightarrow y}^{detach} + \epsilon_{y\rightarrow x}(y_t^c, \bar y_0) - (\epsilon_x + \epsilon_y) \|_2^2
+\mathcal{L}_{cycle} = \| \epsilon_{x\rightarrow y}^{detach} + \epsilon_{y\rightarrow x}(y_t^c, \bar y_0) - (\epsilon_x + \epsilon_y) \|_2^2
 $$
 
 where `y_t_c` is built from non-detached `y_0`, and `y_0_cond = norm(y_0.detach())`.
@@ -161,8 +160,7 @@ flowchart TD
 ## 3) Consistency Loss (`consis_loss`)
 
 $$
-\mathcal{L}_{consis} =
-\| \epsilon_{x\rightarrow y}^{detach} + \epsilon_{x\rightarrow x}(y_t, x_0) - (\epsilon_x + \epsilon_y) \|_2^2
+\mathcal{L}_{consis} = \| \epsilon_{x\rightarrow y}^{detach} + \epsilon_{x\rightarrow x}(y_t, x_0) - (\epsilon_x + \epsilon_y) \|_2^2
 $$
 
 with `y_t = q_sample(y_0.detach(), t, eps_y)`.
@@ -194,8 +192,7 @@ flowchart LR
 ## 4) Invariance Loss (`invar_loss`)
 
 $$
-\mathcal{L}_{invar} =
-\| \epsilon_{x\rightarrow y}(x_t, x_0) - \epsilon_{y\rightarrow y}(x_t, \bar y_0)^{detach} \|_2^2
+\mathcal{L}_{invar} = \| \epsilon_{x\rightarrow y}(x_t, x_0) - \epsilon_{y\rightarrow y}(x_t, \bar y_0)^{detach} \|_2^2
 $$
 
 ### High-level role

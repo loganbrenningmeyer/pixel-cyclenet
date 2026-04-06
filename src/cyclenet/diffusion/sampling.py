@@ -18,7 +18,7 @@ def cyclenet_ddpm_step(
 ) -> torch.Tensor:
     """
     Performs a single DDPM denoising step for `CycleNet` model, translating in the direction
-    of "uncond" -> "cond" as defined by `c_idx_cond` with CFG weighted by `w`
+    of src_idx -> tgt_idx with CFG weighted by `w`
 
     Args:
         model (CycleNet): CycleNet model used for translation
@@ -55,7 +55,7 @@ def cyclenet_ddpm_loop(
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """
     Performs full DDPM translation for `CycleNet` model, translating in the direction
-    of "uncond" -> "cond" as defined by `c_idx_cond` with CFG weighted by `w`
+    of src_idx -> tgt_idx with CFG weighted by `w`
 
     Args:
         model (CycleNet): CycleNet model used for translation
@@ -114,7 +114,7 @@ def cyclenet_ddim_step(
 ):
     """
     Performs a single DDIM denoising step for `CycleNet` model, translating in the direction
-    of "uncond" -> "cond" as defined by `c_idx_cond` with CFG weighted by `w`
+    of src_idx -> tgt_idx with CFG weighted by `w`
 
     Args:
         model (CycleNet): CycleNet model used for translation
@@ -155,7 +155,7 @@ def cyclenet_ddim_loop(
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """
     Performs full DDIM translation for `CycleNet` model, translating in the direction
-    of "uncond" -> "cond" as defined by `c_idx_cond` with CFG weighted by `w`
+    of src_idx -> tgt_idx with CFG weighted by `w`
 
     Args:
         model (CycleNet): CycleNet model used for translation
@@ -192,7 +192,7 @@ def cyclenet_ddim_loop(
     # -------------------------
     # Iteratively denoise: t = t_noise, ..., 0
     # -------------------------
-    for i, t_i in tqdm(enumerate(t_steps_rev[:-1])):
+    for i, t_i in enumerate(t_steps_rev[:-1]):
         # -------------------------
         # Create t / t_prev batch
         # -------------------------

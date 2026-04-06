@@ -1,8 +1,7 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
-from .conditioning import DomainEmbedding, sinusoidal_embedding
+from .conditioning import sinusoidal_embedding
 from .blocks import EncoderBlock, DecoderBlock, Bottleneck, FinalLayer
 
 
@@ -13,10 +12,10 @@ class UNet(nn.Module):
         base_ch: int = 128,
         t_dim: int = 512,
         d_dim: int = 128,
-        ch_mults: list[int] = [1, 2, 2, 2],
+        ch_mults: list[int] = [1, 2, 4, 4],
         num_res_blocks: int = 2,
-        enc_heads: list[int] = [0, 1, 0, 0],
-        mid_heads: int = 1,
+        enc_heads: list[int] = [0, 0, 0, 4],
+        mid_heads: int = 4,
         res_dropout: float = 0.0,
         attn_dropout: float = 0.0,
         ffn_dropout: float = 0.0,

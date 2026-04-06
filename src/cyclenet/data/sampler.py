@@ -42,7 +42,7 @@ class DomainSampler(Sampler[list[int]]):
 
     def __len__(self):
         # -- Number of batches this DDP rank will produce
-        return self.num_batches // self.world_size
+        return len(range(self.rank, self.num_batches, self.world_size))
     
     def __iter__(self):
         g = np.random.default_rng(self.seed + self.epoch)

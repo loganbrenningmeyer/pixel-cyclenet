@@ -1,0 +1,61 @@
+# =========================
+# Run
+# =========================
+run:
+  name: "model_1"
+  runs_dir: "/develop/code/runs/cyclenet/remote_sensing"
+
+  # -- UNet Backbone ckpt
+  unet_ckpt: "/develop/code/runs/unet/remote_sensing/training/checkpoints/step-400000.ckpt"
+
+  seed: 42
+
+# =========================
+# Training
+# =========================
+train:
+  steps: 50000
+  batch_size: 16
+  lr: 1e-5
+  weight_decay: 1e-4
+  ema_decay: 0.9999
+
+# =========================
+# Model
+# =========================
+model:
+  recon_weight: 1.0
+  cycle_weight: 0.01
+  consis_weight: 0.1
+  invar_weight: 0.1
+  spec_weight: 0
+
+# =========================
+# Dataset
+# =========================
+data:
+  src_dir: /cgi/data/nvesd/workspaces/logan/data/remote_sensing/tiled/sim
+  tgt_dir: /cgi/data/nvesd/workspaces/logan/data/remote_sensing/tiled/real
+  image_size: 256
+  transform_id: 3       # ( 3 ): Remote sensing specific augmentations
+
+# =========================
+# Logging
+# =========================
+logging:
+  loss_interval: 10
+  ckpt_interval: 2500
+  sample_interval: 2500
+
+# =========================
+# Sampling
+# =========================
+sampling:
+  num_samples: 16
+  sampler: ddim
+  ddim_steps: 50
+  eta: 0
+  # -- cfg_weights: Classifier free guidance weights for inference
+  cfg_weights: [1.0, 2.0, 3.0, 4.0, 5.0]
+  # -- noise_strengths: Different proportions of total DDPM timesteps to noise to for sampling
+  noise_strengths: [0.1, 0.2, 0.3, 0.4, 0.5]

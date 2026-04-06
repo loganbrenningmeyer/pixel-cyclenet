@@ -1,0 +1,28 @@
+# =========================
+# Run
+# =========================
+run:
+  run_dir: /develop/code/runs/cyclenet/augs_2_updown
+  ckpt_name: step-15000.ckpt
+
+# =========================
+# Dataset
+# =========================
+data:
+  src_dir: /cgi/data/nvesd/workspaces/logan/data/ehd_organized/RGB_Filtered/train/sim
+  # -- [Source Domain] - (0): Sim, (1): Real
+  src_idx: 0
+
+  out_dir: /cgi/data/nvesd/workspaces/logan/data/ehd_organized/RGB_Filtered/train/cyclenet_sim/updown/step-15000_strength-0.5_cfg-3.0
+  image_size: 224
+
+# =========================
+# Sampling
+# =========================
+sampling:
+  batch_size: 16
+  sampler: ddim
+  ddim_steps: 100
+  eta: 0
+  cfg_weight: 3.0
+  noise_strength: 0.5

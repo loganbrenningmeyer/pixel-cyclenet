@@ -4,6 +4,7 @@ import torch.nn.functional as F
 from cyclenet.models import UNet, CycleNet
 from cyclenet.diffusion import DiffusionSchedule
 from cyclenet.diffusion import q_sample, x0_from_eps
+from cyclenet.diffusion.spectral import spectral_loss
 
 
 # =========================
@@ -158,9 +159,36 @@ def cyclenet_loss(
 
     invar_loss = F.mse_loss(eps_xt_x2y_x0, eps_xt_y2y_y0.detach())
 
+    # -------------------------
+    # Spectral Loss
+    # -- Compare power spectrum between translated sim / real images
+    # -------------------------
+    # sim_mask = (src_idx == 0)
+    # real_mask = (src_idx == 1)
+
+    # # -- Ensure there are sim / real present in batch
+    # if sim_mask.any() and real_mask.any():
+    #     y_sim2real = y_0[sim_mask]
+    #     x_real = x_0[real_mask]
+
+    #     spec_loss = spectral_loss(
+    #         translated_rgb=y_sim2real,
+    #         real_rgb=x_real,
+    #     )
+    # else:
+    #     spec_loss = torch.tensor(0.0, device=x_0.device, dtype=x_0.dtype)
+
     return {
         "recon": recon_loss,
         "cycle": cycle_loss,
         "consis": consis_loss,
         "invar": invar_loss,
+        # "spec": spec_loss,
     }
+
+
+def unwrap(m):
+    """
+    Unwrap DDP module if it is wrapped
+    """
+    return m.module if hasattr(m, "module") else m

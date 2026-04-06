@@ -2,7 +2,7 @@
 # Run
 # =========================
 run:
-  name: "unet_augs_2"
+  name: "unet_augs_2_updown"
   runs_dir: "/develop/code/runs/unet"
 
   resume:
@@ -15,7 +15,7 @@ run:
 # Training
 # =========================
 train:
-  steps: 200000
+  steps: 400000
   batch_size: 64
   lr: 1e-4
   weight_decay: 1e-4

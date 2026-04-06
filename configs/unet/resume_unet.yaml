@@ -1,0 +1,12 @@
+# =========================
+# Run
+# =========================
+run:
+  run_dir: /develop/code/runs/unet/unet_augs_2_updown
+  ckpt_name: step-390000.ckpt
+
+# =========================
+# Training
+# =========================
+train:
+  total_steps: 400000
