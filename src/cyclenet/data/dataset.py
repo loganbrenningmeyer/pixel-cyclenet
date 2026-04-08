@@ -5,7 +5,7 @@ from torch.utils.data import Dataset
 from pathlib import Path
 from albumentations import Compose
 
-from .transforms import load_unet_transforms, load_cyclenet_transforms, load_source_transforms
+from .transforms import load_source_transforms
 
 
 def load_rgb(path: Path) -> torch.Tensor:
@@ -30,6 +30,36 @@ def to_one_hot(mask: torch.Tensor, num_classes: int) -> torch.Tensor:
     mask = mask.long()
     one_hot = F.one_hot(mask, num_classes=num_classes).permute(2, 0, 1).float()
     return one_hot
+
+
+def to_one_hot_with_ignore(mask: torch.Tensor, num_classes: int = 8, ignore_value: int = 0) -> torch.Tensor:
+    """
+    Raw mask values:
+      0 = ignore
+      1..8 = valid semantic classes
+
+    Output:
+      seg: (8, H, W) float
+      - ignore pixels become all zeros
+      - class 1 maps to channel 0
+      - class 8 maps to channel 7
+    """
+    mask = mask.long()
+
+    h, w = mask.shape
+    seg = torch.zeros((num_classes, h, w), dtype=torch.float32)
+
+    valid = mask != ignore_value
+    if valid.any():
+        class_idx = mask[valid] - 1  # 1..8 -> 0..7
+
+        if class_idx.min() < 0 or class_idx.max() >= num_classes:
+            bad_vals = torch.unique(mask[(mask != ignore_value) & ((mask < 1) | (mask > num_classes))])
+            raise ValueError(f"Found out-of-range label values: {bad_vals.tolist()}")
+
+        seg[class_idx, valid] = 1.0
+
+    return seg
 
 
 class DomainDataset(Dataset):
@@ -166,7 +196,7 @@ class CycleDomainSegDataset(Dataset):
 
         img = transformed["image"]
         mask = transformed["mask"].long()
-        seg = to_one_hot(mask, self.num_classes)
+        seg = to_one_hot_with_ignore(mask, self.num_classes, ignore_value=0)
 
         src_idx = torch.tensor(self.domain_idx, dtype=torch.long)
         tgt_idx = torch.tensor(1 - self.domain_idx, dtype=torch.long)
@@ -252,7 +282,7 @@ class SourceSegDataset(Dataset):
 
         img = transformed["image"]
         mask = transformed["mask"].long()
-        seg = to_one_hot(mask, self.num_classes)
+        seg = to_one_hot_with_ignore(mask, self.num_classes, ignore_value=0)
 
         return img, seg
     
@@ -337,6 +367,6 @@ class TranslateSegDataset(Dataset):
 
         img = transformed["image"]
         mask = transformed["mask"].long()
-        seg = to_one_hot(mask, self.num_classes)
+        seg = to_one_hot_with_ignore(mask, self.num_classes, ignore_value=0)
 
         return img, seg, str(rgb_path)

@@ -13,13 +13,12 @@ from cyclenet.data.dataset import (
     TranslateSegDataset,
     load_label_mask,
 )
-from cyclenet.data.transforms import load_cyclenet_transforms, load_source_transforms
+from cyclenet.data.transforms import load_cyclenet_transforms
 from cyclenet.diffusion.losses import build_seg_condition
 
 
 DEFAULT_PALETTE = np.array(
     [
-        [0, 0, 0],
         [230, 25, 75],
         [60, 180, 75],
         [255, 225, 25],
@@ -27,6 +26,7 @@ DEFAULT_PALETTE = np.array(
         [245, 130, 48],
         [145, 30, 180],
         [70, 240, 240],
+        [240, 50, 50],
     ],
     dtype=np.uint8,
 )
@@ -39,9 +39,10 @@ def load_config(config_path: str) -> DictConfig:
 def require_num_seg_classes(config: DictConfig) -> int:
     num_classes = config.model.get("num_seg_classes", None)
     if num_classes is None:
-        raise ValueError(
-            "Missing `model.num_seg_classes` in config. Add it to the training config, "
-            "for example `num_seg_classes: 8`."
+        num_classes = 8
+        print(
+            "[warning] Missing `model.num_seg_classes` in config. "
+            "Defaulting to 8 for checker consistency with dataset.py."
         )
     return int(num_classes)
 
@@ -54,12 +55,18 @@ def denorm_image(img: torch.Tensor) -> np.ndarray:
 
 
 def seg_to_color(seg: torch.Tensor, palette: np.ndarray = DEFAULT_PALETTE) -> np.ndarray:
-    seg_idx = seg.detach().cpu().argmax(dim=0).numpy().astype(np.int64)
-    if palette.shape[0] < int(seg_idx.max()) + 1:
+    seg_cpu = seg.detach().cpu()
+    seg_idx = seg_cpu.argmax(dim=0).numpy().astype(np.int64)
+    valid = (seg_cpu.sum(dim=0) > 0).numpy()
+
+    if valid.any() and palette.shape[0] < int(seg_idx[valid].max()) + 1:
         raise ValueError(
-            f"Palette has {palette.shape[0]} colors, but found class id {int(seg_idx.max())}."
+            f"Palette has {palette.shape[0]} colors, but found class id {int(seg_idx[valid].max())}."
         )
-    return palette[seg_idx]
+
+    color = np.zeros((seg_idx.shape[0], seg_idx.shape[1], 3), dtype=np.uint8)
+    color[valid] = palette[seg_idx[valid]]
+    return color
 
 
 def overlay_mask(rgb: np.ndarray, seg_rgb: np.ndarray, alpha: float = 0.45) -> np.ndarray:
@@ -174,14 +181,30 @@ def validate_sample(
     )
 
     per_pixel_sum = seg.sum(dim=0)
-    max_dev = float((per_pixel_sum - 1.0).abs().max())
+    valid_pixel = per_pixel_sum > 0
+
+    max_valid_dev = 0.0
+    if valid_pixel.any():
+        max_valid_dev = float((per_pixel_sum[valid_pixel] - 1.0).abs().max())
+
+    invalid_pixel = ~valid_pixel
+    max_invalid_abs = 0.0
+    if invalid_pixel.any():
+        max_invalid_abs = float(per_pixel_sum[invalid_pixel].abs().max())
+
     unique_seg_values = torch.unique(seg.cpu())
     unique_seg_values_list = [float(v) for v in unique_seg_values.tolist()]
 
-    if max_dev > 1e-4:
+    if max_valid_dev > 1e-4:
         raise AssertionError(
-            f"{domain_name}[{sample_idx}] segmentation is not one-hot after transform; "
-            f"max per-pixel channel-sum deviation is {max_dev:.6f}"
+            f"{domain_name}[{sample_idx}] valid segmentation pixels are not one-hot after transform; "
+            f"max per-pixel channel-sum deviation is {max_valid_dev:.6f}"
+        )
+
+    if max_invalid_abs > 1e-4:
+        raise AssertionError(
+            f"{domain_name}[{sample_idx}] ignored pixels are expected to be all-zero across channels; "
+            f"max ignored-pixel channel sum is {max_invalid_abs:.6f}"
         )
 
     invalid_seg_values = [v for v in unique_seg_values_list if v not in (0.0, 1.0)]
@@ -190,7 +213,9 @@ def validate_sample(
             f"{domain_name}[{sample_idx}] segmentation contains non-binary values: {invalid_seg_values[:10]}"
         )
 
-    classes_present = torch.unique(seg.argmax(dim=0).cpu()).tolist()
+    class_map = seg.argmax(dim=0).cpu()
+    classes_present = torch.unique(class_map[valid_pixel.cpu()]).tolist() if valid_pixel.any() else []
+    ignored_fraction = float(invalid_pixel.float().mean())
 
     print(f"[{domain_name}] sample {sample_idx}")
     print(f"  image shape/dtype : {tuple(img.shape)} / {img.dtype}")
@@ -200,6 +225,7 @@ def validate_sample(
     print(f"  cond rgb range    : [{cond_rgb_min:.4f}, {cond_rgb_max:.4f}]")
     print(f"  cond seg range    : [{cond_seg_min:.4f}, {cond_seg_max:.4f}]")
     print(f"  classes present   : {classes_present}")
+    print(f"  ignored fraction  : {ignored_fraction:.4f}")
 
 
 def save_debug_visual(
@@ -358,13 +384,13 @@ def main() -> None:
 
     all_seen_vals = sorted(src_stats["unique_vals"] | tgt_stats["unique_vals"])
     print(f"[global] raw label values seen: {all_seen_vals}")
-    if all_seen_vals:
-        max_val = max(all_seen_vals)
-        if max_val >= num_classes:
-            raise ValueError(
-                f"Found raw label value {max_val}, but config num_seg_classes={num_classes}. "
-                "Either labels are not in [0, num_seg_classes-1] or config is wrong."
-            )
+    allowed_vals = set(range(0, num_classes + 1))
+    bad_vals = [v for v in all_seen_vals if v not in allowed_vals]
+    if bad_vals:
+        raise ValueError(
+            f"Found unexpected raw label values {bad_vals}. "
+            f"Expected raw labels in [0, {num_classes}] with 0 reserved for ignore."
+        )
 
     transforms = load_cyclenet_transforms(config.data.transform_id, config.data.image_size)
 
