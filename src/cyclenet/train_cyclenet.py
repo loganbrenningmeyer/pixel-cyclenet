@@ -203,7 +203,10 @@ def main():
     # -------------------------
     # Initialize ControlNet
     # -------------------------
-    control = ControlNet(backbone, in_ch=3).to(device)
+    num_seg_classes = config.model.num_seg_classes
+    control_in_ch = 3 + num_seg_classes
+
+    control = ControlNet(backbone, in_ch=control_in_ch).to(device)
 
     # -------------------------
     # Initialize CycleNet / EMA model

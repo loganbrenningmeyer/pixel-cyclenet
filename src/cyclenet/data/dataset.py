@@ -1,10 +1,35 @@
 import cv2
 import torch
+import torch.nn.functional as F
 from torch.utils.data import Dataset
 from pathlib import Path
 from albumentations import Compose
 
 from .transforms import load_unet_transforms, load_cyclenet_transforms, load_source_transforms
+
+
+def load_rgb(path: Path) -> torch.Tensor:
+    img = cv2.imread(str(path), cv2.IMREAD_COLOR)
+    img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    return img
+
+
+def load_label_mask(path: Path) -> torch.Tensor:
+    mask = cv2.imread(str(path), cv2.IMREAD_UNCHANGED)
+    if mask is None:
+        raise FileNotFoundError(f"Could not read label mask: {path}")
+
+    if mask.ndim == 3:
+        mask = mask[..., 0]
+
+    return mask
+
+
+def to_one_hot(mask: torch.Tensor, num_classes: int) -> torch.Tensor:
+    # mask: (H, W) long -> one_hot: (C, H, W) float
+    mask = mask.long()
+    one_hot = F.one_hot(mask, num_classes=num_classes).permute(2, 0, 1).float()
+    return one_hot
 
 
 class DomainDataset(Dataset):
@@ -62,13 +87,15 @@ class CycleDomainDataset(Dataset):
         self.samples = []
         for path in sorted(Path(data_dir).rglob("*")):
             # -- Check file extension
-            if path.suffix.lower() in file_exts:
-                self.samples.append(path)
+            if path.suffix.lower() not in file_exts:
+                continue
 
             # -- Check allowed parent directory
             if parent_dirs is not None:
                 if path.parent.name not in parent_dirs:
                     continue
+
+            self.samples.append(path)
 
         self.domain_idx = int(domain_idx)
         self.transforms = transforms
@@ -85,80 +112,66 @@ class CycleDomainDataset(Dataset):
         tgt_idx = torch.tensor(1 - self.domain_idx, dtype=torch.long)
 
         return img, src_idx, tgt_idx
+    
 
-
-class UNetDataset(Dataset):
-    def __init__(self, src_dir: str, tgt_dir: str, transform_id: int = 0, image_size: int = 224):
-        # -------------------------
-        # Store domain src/tgt paths with domain indices
-        # -------------------------
+class CycleDomainSegDataset(Dataset):
+    """
+    Returns (img, seg, src_idx, tgt_idx) for CycleNetTrainer, including images'
+    corresponding segmentation masks
+    """
+    def __init__(
+        self,
+        data_dir: str,
+        domain_idx: int,
+        transforms: Compose,
+        num_classes: int,
+        file_exts: set[str] = {".jpg", ".png", ".tif", ".tiff"},
+        rgb_parent_dir: str = "opt",
+        label_parent_dir: str = "gt_ss_mask",
+    ):
         self.samples = []
+        self.domain_idx = int(domain_idx)
+        self.transforms = transforms
+        self.num_classes = num_classes
+        self.rgb_parent_dir = rgb_parent_dir
+        self.label_parent_dir = label_parent_dir
 
-        # -- Source: 0
-        for path in sorted(Path(src_dir).rglob("*")):
-            if path.suffix.lower() in {".jpg", ".png"}:
-                self.samples.append((path, 0))
+        for path in sorted(Path(data_dir).rglob("*")):
+            # -- Check file extension
+            if path.suffix.lower() not in file_exts:
+                continue
 
-        # -- Target: 1
-        for path in Path(tgt_dir).rglob("*"):
-            if path.suffix.lower() in {".jpg", ".png"}:
-                self.samples.append((path, 1))
+            # -------------------------
+            # Derive label path from RGB filenames
+            # -------------------------
+            if path.parent.name != rgb_parent_dir:
+                continue
 
-        # -------------------------
-        # Define transforms
-        # -------------------------
-        self.transforms = load_unet_transforms(transform_id, image_size)
+            label_path = path.parent.parent / self.label_parent_dir / path.name
+            if not label_path.exists():
+                raise FileNotFoundError(f"Missing label for {path}: expected {label_path}")
+
+            self.samples.append((path, label_path))
 
     def __len__(self):
         return len(self.samples)
-
+    
     def __getitem__(self, idx: int):
-        filepath, d_idx = self.samples[idx]
-        img = cv2.imread(filepath)
-        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-        img = self.transforms(image=img)["image"]
+        rgb_path, label_path = self.samples[idx]
 
-        return img, torch.tensor(d_idx, dtype=torch.long)
+        img = load_rgb(rgb_path)
+        mask = load_label_mask(label_path)
 
+        transformed = self.transforms(image=img, mask=mask)
 
-class CycleNetDataset(Dataset):
-    def __init__(self, src_dir: str, tgt_dir: str, transform_id: int = 0, image_size: int = 224):
-        # -------------------------
-        # Store domain src/tgt paths with domain indices
-        # -------------------------
-        self.samples = []
+        img = transformed["image"]
+        mask = transformed["mask"].long()
+        seg = to_one_hot(mask, self.num_classes)
 
-        # -- Source: 0
-        for path in sorted(Path(src_dir).rglob("*")):
-            if path.suffix.lower() in {".jpg", ".png"}:
-                self.samples.append((path, 0))
+        src_idx = torch.tensor(self.domain_idx, dtype=torch.long)
+        tgt_idx = torch.tensor(1 - self.domain_idx, dtype=torch.long)
 
-        # -- Target: 1
-        for path in sorted(Path(tgt_dir).rglob("*")):
-            if path.suffix.lower() in {".jpg", ".png"}:
-                self.samples.append((path, 1))
-
-        # -------------------------
-        # Define transforms
-        # -------------------------
-        self.transforms = load_cyclenet_transforms(transform_id, image_size)
-
-
-    def __len__(self):
-        return len(self.samples)
-
-    def __getitem__(self, idx: int):
-        # -- Load image / apply transforms
-        filepath, src_idx = self.samples[idx]
-        img = cv2.imread(filepath)
-        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-        img = self.transforms(image=img)["image"]
-
-        # -- Invert src_idx for tgt_idx
-        src_idx = torch.tensor(src_idx, dtype=torch.long)
-        tgt_idx = 1 - src_idx
-
-        return img, src_idx, tgt_idx
+        return img, seg, src_idx, tgt_idx
 
 
 class SourceDataset(Dataset):
@@ -189,6 +202,61 @@ class SourceDataset(Dataset):
         return img
     
 
+class SourceSegDataset(Dataset):
+    """
+    
+    """
+    def __init__(
+        self,
+        src_dir: str,
+        image_size: int,
+        num_classes: int,
+        file_exts: set[str] = {".jpg", ".png", ".tif", ".tiff"},
+        rgb_parent_dir: str = "opt",
+        label_parent_dir: str = "gt_ss_mask",
+    ):
+        self.samples = []
+        self.src_dir = Path(src_dir)
+        self.rgb_parent_dir = rgb_parent_dir
+        self.label_parent_dir = label_parent_dir
+        self.transforms = load_source_transforms(image_size)
+        self.num_classes = num_classes
+
+        for path in sorted(self.src_dir.rglob("*")):
+            # -- Check file extension
+            if path.suffix.lower() not in file_exts:
+                continue
+
+            # -------------------------
+            # Derive label path from RGB filenames
+            # -------------------------
+            if path.parent.name != rgb_parent_dir:
+                continue
+
+            label_path = path.parent.parent / self.label_parent_dir / path.name
+            if not label_path.exists():
+                raise FileNotFoundError(f"Missing label for {path}: expected {label_path}")
+            
+            self.samples.append((path, label_path))
+
+    def __len__(self):
+        return len(self.samples)
+    
+    def __getitem__(self, idx: int):
+        rgb_path, label_path = self.samples[idx]
+
+        img = load_rgb(rgb_path)
+        mask = load_label_mask(label_path)
+
+        transformed = self.transforms(image=img, mask=mask)
+
+        img = transformed["image"]
+        mask = transformed["mask"].long()
+        seg = to_one_hot(mask, self.num_classes)
+
+        return img, seg
+    
+
 class TranslateDataset(Dataset):
     def __init__(self, src_dir: str, image_size: int = 224):
         # -------------------------
@@ -217,3 +285,58 @@ class TranslateDataset(Dataset):
         img = self.transforms(image=img)["image"]
 
         return img, str(filepath)
+    
+
+class TranslateSegDataset(Dataset):
+    """
+    
+    """
+    def __init__(
+        self,
+        src_dir: str,
+        image_size: int,
+        num_classes: int,
+        file_exts: set[str] = {".jpg", ".png", ".tif", ".tiff"},
+        rgb_parent_dir: str = "opt",
+        label_parent_dir: str = "gt_ss_mask",
+    ):
+        self.samples = []
+        self.src_dir = Path(src_dir)
+        self.rgb_parent_dir = rgb_parent_dir
+        self.label_parent_dir = label_parent_dir
+        self.transforms = load_source_transforms(image_size)
+        self.num_classes = num_classes
+
+        for path in sorted(self.src_dir.rglob("*")):
+            # -- Check file extension
+            if path.suffix.lower() not in file_exts:
+                continue
+
+            # -------------------------
+            # Derive label path from RGB filenames
+            # -------------------------
+            if path.parent.name != rgb_parent_dir:
+                continue
+
+            label_path = path.parent.parent / self.label_parent_dir / path.name
+            if not label_path.exists():
+                raise FileNotFoundError(f"Missing label for {path}: expected {label_path}")
+            
+            self.samples.append((path, label_path))
+
+    def __len__(self):
+        return len(self.samples)
+    
+    def __getitem__(self, idx: int):
+        rgb_path, label_path = self.samples[idx]
+
+        img = load_rgb(rgb_path)
+        mask = load_label_mask(label_path)
+
+        transformed = self.transforms(image=img, mask=mask)
+
+        img = transformed["image"]
+        mask = transformed["mask"].long()
+        seg = to_one_hot(mask, self.num_classes)
+
+        return img, seg, str(rgb_path)

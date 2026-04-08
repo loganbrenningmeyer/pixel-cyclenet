@@ -110,7 +110,7 @@ def main():
     )
 
     # -------------------------
-    # Initialize UNet / DomainEmbedding / ControlNet
+    # Initialize UNet / DomainEmbedding
     # -------------------------
     backbone = UNet(
         in_ch=3,
@@ -128,7 +128,13 @@ def main():
 
     domain_emb = DomainEmbedding(d_dim=unet_config.model.d_dim).to(device)
 
-    control = ControlNet(backbone, in_ch=3).to(device)
+    # -------------------------
+    # Initialize ControlNet with segmentation map channels
+    # -------------------------
+    num_seg_classes = cyclenet_config.model.num_seg_classes
+    control_in_ch = 3 + num_seg_classes
+
+    control = ControlNet(backbone, in_ch=control_in_ch).to(device)
 
     # -------------------------
     # Load CycleNet (EMA model)

@@ -1,7 +1,19 @@
-from .dataset import UNetDataset, CycleNetDataset, SourceDataset
+from .dataset import (
+    DomainDataset,
+    CycleDomainDataset,
+    CycleDomainSegDataset,
+    SourceDataset,
+    SourceSegDataset,
+    TranslateDataset,
+    TranslateSegDataset,
+)
 
 __all__ = [
-    "UNetDataset",
-    "CycleNetDataset",
-    "SourceDataset"
+    "DomainDataset", 
+    "CycleDomainDataset",
+    "CycleDomainSegDataset",
+    "SourceDataset",
+    "SourceSegDataset",
+    "TranslateDataset",
+    "TranslateSegDataset",
 ]

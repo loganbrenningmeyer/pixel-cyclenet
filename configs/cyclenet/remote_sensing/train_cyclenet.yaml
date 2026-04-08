@@ -30,6 +30,9 @@ model:
   invar_weight: 0.1
   spec_weight: 0
 
+  control_condition: rgb_seg
+  num_seg_classes: 8
+
 # =========================
 # Dataset
 # =========================
