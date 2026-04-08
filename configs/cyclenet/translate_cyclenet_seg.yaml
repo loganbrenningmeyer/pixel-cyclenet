@@ -1,0 +1,32 @@
+# =========================
+# Run
+# =========================
+run:
+  run_dir: /develop/code/runs/cyclenet/remote_sensing/model_1
+  ckpt_name: step-15000.ckpt
+
+# =========================
+# Dataset
+# =========================
+data:
+  src_dir: /cgi/data/nvesd/workspaces/logan/data/remote_sensing/tiled/sim
+
+  rgb_parent_dir: opt
+  label_parent_dir: gt_ss_mask
+
+  # -- [Source Domain] - (0): Sim, (1): Real
+  src_idx: 0
+
+  out_dir: /cgi/data/nvesd/workspaces/logan/data/remote_sensing/tiled/cyclenet_sim/model_1
+  image_size: 256
+
+# =========================
+# Sampling
+# =========================
+sampling:
+  batch_size: 16
+  sampler: ddim
+  ddim_steps: 100
+  eta: 0
+  cfg_weight: 3.0
+  noise_strength: 0.5

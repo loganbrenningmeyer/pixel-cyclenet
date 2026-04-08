@@ -28,10 +28,6 @@ model:
   cycle_weight: 0.01
   consis_weight: 0.1
   invar_weight: 0.1
-  spec_weight: 0
-
-  control_condition: rgb_seg
-  num_seg_classes: 8
 
 # =========================
 # Dataset
@@ -39,6 +35,10 @@ model:
 data:
   src_dir: /cgi/data/nvesd/workspaces/logan/data/remote_sensing/tiled/sim
   tgt_dir: /cgi/data/nvesd/workspaces/logan/data/remote_sensing/tiled/real
+
+  rgb_parent_dir: opt
+  label_parent_dir: gt_ss_mask
+
   image_size: 256
   transform_id: 3       # ( 3 ): Remote sensing specific augmentations
 

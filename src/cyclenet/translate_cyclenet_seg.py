@@ -10,8 +10,8 @@ from pathlib import Path
 from omegaconf import OmegaConf, DictConfig
 from tqdm import tqdm
 
-from cyclenet.data import TranslateDataset
-from cyclenet.diffusion import DiffusionSchedule, cyclenet_ddim_loop, cyclenet_ddpm_loop
+from cyclenet.data import TranslateSegDataset
+from cyclenet.diffusion import DiffusionSchedule, cyclenet_ddim_loop, cyclenet_ddpm_loop, build_seg_condition
 from cyclenet.models import CycleNet, UNet, ControlNet
 from cyclenet.models.conditioning import DomainEmbedding
 
@@ -94,7 +94,15 @@ def main():
     # -------------------------
     # Source Samples Dataset / DataLoader
     # -------------------------
-    dataset = TranslateDataset(translate_config.data.src_dir, image_size=translate_config.data.image_size)
+    num_seg_classes = cyclenet_config.model.num_seg_classes
+
+    dataset = TranslateSegDataset(
+        src_dir=translate_config.data.src_dir,
+        image_size=translate_config.data.image_size,
+        num_classes=num_seg_classes,
+        rgb_parent_dir=translate_config.data.rgb_parent_dir,
+        label_parent_dir=translate_config.data.label_parent_dir,
+    )
 
     # -- Create subset per-rank
     indices = list(range(rank, len(dataset), world_size))
@@ -129,9 +137,12 @@ def main():
     domain_emb = DomainEmbedding(d_dim=unet_config.model.d_dim).to(device)
 
     # -------------------------
-    # Initialize ControlNet
+    # Initialize ControlNet with segmentation map channels
     # -------------------------
-    control = ControlNet(backbone, in_ch=3).to(device)
+    num_seg_classes = cyclenet_config.model.num_seg_classes
+    control_in_ch = 3 + num_seg_classes
+
+    control = ControlNet(backbone, in_ch=control_in_ch).to(device)
 
     # -------------------------
     # Load CycleNet (EMA model)
@@ -178,7 +189,7 @@ def main():
         if is_main:
             loader_iter = tqdm(dataloader, desc="Translating", unit="batch")
 
-        for x_src, filepaths in loader_iter:
+        for x_src, seg_src, filepaths in loader_iter:
             # -------------------------
             # Define source / target indices
             # -------------------------
@@ -198,7 +209,8 @@ def main():
 
             # -- Move to GPU / create control image
             x_src = x_src.to(device, non_blocking=True)
-            x_src_ctrl = ((x_src + 1.0) / 2.0).clamp(0.0, 1.0)
+            seg_src = seg_src.to(device, non_blocking=True)
+            c_img = build_seg_condition(x_src, seg_src)
 
             with autocast(device_type="cuda"):
                 # -------------------------
@@ -210,7 +222,7 @@ def main():
                         x_src=x_src,
                         src_idx=src_idx,
                         tgt_idx=tgt_idx,
-                        c_img=x_src_ctrl,
+                        c_img=c_img,
                         sched=sched,
                         w=cfg_weight,
                         strength=noise_strength,
@@ -224,7 +236,7 @@ def main():
                         x_src=x_src,
                         src_idx=src_idx,
                         tgt_idx=tgt_idx,
-                        c_img=x_src_ctrl,
+                        c_img=c_img,
                         sched=sched,
                         w=cfg_weight,
                         strength=noise_strength,

@@ -10,8 +10,8 @@ from torch.amp import GradScaler
 from pathlib import Path
 from omegaconf import OmegaConf, DictConfig
 
-from cyclenet.training import CycleNetTrainer
-from cyclenet.data import CycleDomainDataset, SourceDataset, DomainSampler, load_cyclenet_transforms
+from cyclenet.training import CycleNetTrainerSeg
+from cyclenet.data import CycleDomainSegDataset, SourceSegDataset, DomainSampler, load_cyclenet_transforms
 from cyclenet.diffusion import DiffusionSchedule
 from cyclenet.models import CycleNet, UNet, ControlNet
 from cyclenet.models.conditioning import DomainEmbedding
@@ -135,11 +135,27 @@ def main():
     # -------------------------
     rank_batch_size = config.train.batch_size // world_size
 
+    num_seg_classes = config.model.num_seg_classes
     transforms = load_cyclenet_transforms(config.data.transform_id, config.data.image_size)
 
     # -- Create real / sim datasets + concatenate [real, sim]
-    real_ds = CycleDomainDataset(config.data.tgt_dir, domain_idx=1, transforms=transforms)
-    sim_ds  = CycleDomainDataset(config.data.src_dir, domain_idx=0, transforms=transforms)
+    real_ds = CycleDomainSegDataset(
+        data_dir=config.data.tgt_dir,
+        domain_idx=1,
+        transforms=transforms,
+        num_classes=num_seg_classes,
+        rgb_parent_dir=config.data.rgb_parent_dir,
+        label_parent_dir=config.data.label_parent_dir,
+    )
+
+    sim_ds = CycleDomainSegDataset(
+        data_dir=config.data.src_dir,
+        domain_idx=0,
+        transforms=transforms,
+        num_classes=num_seg_classes,
+        rgb_parent_dir=config.data.rgb_parent_dir,
+        label_parent_dir=config.data.label_parent_dir,
+    )
 
     dataset = ConcatDataset([real_ds, sim_ds])
 
@@ -165,7 +181,13 @@ def main():
     # -------------------------
     # Source Samples Dataset / DataLoader (only main rank)
     # -------------------------
-    sample_dataset = SourceDataset(config.data.src_dir, image_size=config.data.image_size)
+    sample_dataset = SourceSegDataset(
+        src_dir=config.data.src_dir,
+        image_size=config.data.image_size,
+        num_classes=num_seg_classes,
+        rgb_parent_dir=config.data.rgb_parent_dir,
+        label_parent_dir=config.data.label_parent_dir,
+    )
 
     sample_loader = None
     if is_main:
@@ -202,9 +224,12 @@ def main():
     domain_emb.load_state_dict(ckpt["domain_emb"])
 
     # -------------------------
-    # Initialize ControlNet
+    # Initialize ControlNet with segmentation map channels
     # -------------------------
-    control = ControlNet(backbone, in_ch=3).to(device)
+    num_seg_classes = config.model.num_seg_classes
+    control_in_ch = 3 + num_seg_classes
+
+    control = ControlNet(backbone, in_ch=control_in_ch).to(device)
 
     # -------------------------
     # Initialize CycleNet / EMA model
@@ -257,7 +282,7 @@ def main():
     # -------------------------
     # Create CycleNetTrainer / Run training
     # -------------------------
-    trainer = CycleNetTrainer(
+    trainer = CycleNetTrainerSeg(
         model=model,
         ema_model=ema_model,
         sched=sched,
