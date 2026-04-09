@@ -6,12 +6,19 @@ run:
   ckpt_name: step-15000.ckpt
 
 # =========================
+# Model
+# =========================
+model:
+  num_seg_classes: 8
+
+# =========================
 # Dataset
 # =========================
 data:
   src_dir: /cgi/data/nvesd/workspaces/logan/data/remote_sensing/tiled/sim
 
-  rgb_parent_dir: opt
+  rgb_parent_dirs: 
+    - opt
   label_parent_dir: gt_ss_mask
 
   # -- [Source Domain] - (0): Sim, (1): Real

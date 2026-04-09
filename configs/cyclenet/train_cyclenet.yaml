@@ -2,16 +2,11 @@
 # Run
 # =========================
 run:
-  name: "cyclenet_unet_128_100000"
-  runs_dir: "/develop/code/runs/cyclenet"
+  name: "oem"
+  runs_dir: "/develop/code/runs/cyclenet/remote_sensing"
 
   # -- UNet Backbone ckpt
-  unet_ckpt: "/develop/code/runs/unet_128/training/checkpoints/model-step100000.ckpt"
-
-  # -- Resume CycleNet training
-  resume:
-    enable: 0
-    ckpt_name: null
+  unet_ckpt: "/develop/code/runs/unet/remote_sensing/oem_only/training/checkpoints/step-400000.ckpt"
 
   seed: 42
 
@@ -30,7 +25,7 @@ train:
 # =========================
 model:
   recon_weight: 1.0
-  cycle_weight: 0.005
+  cycle_weight: 0.01
   consis_weight: 0.1
   invar_weight: 0.1
 
@@ -38,10 +33,15 @@ model:
 # Dataset
 # =========================
 data:
-  src_dir: /cgi/data/nvesd/workspaces/logan/data/ehd_organized/RGB_Filtered/train/sim/0002
-  tgt_dir: /cgi/data/nvesd/workspaces/logan/data/ehd_organized/RGB_Filtered/train/real/0002
-  image_size: 224
-  transform_id: 1
+  src_dir: /cgi/data/nvesd/workspaces/logan/data/remote_sensing/tiled/sim/synrs3d
+  tgt_dir: /cgi/data/nvesd/workspaces/logan/data/remote_sensing/tiled/real/OEM
+
+  rgb_parent_dirs: 
+    - opt
+    - pre_opt
+
+  image_size: 256
+  transform_id: 3
 
 # =========================
 # Logging

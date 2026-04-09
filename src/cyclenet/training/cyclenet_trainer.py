@@ -20,9 +20,10 @@ class CycleNetTrainer:
     def __init__(
         self,
         model: CycleNet,
-        ema_model: CycleNet,
+        ema_model: CycleNet | None,
         sched: DiffusionSchedule,
         optimizer: Optimizer,
+        scaler: GradScaler,
         dataloader: DataLoader,
         sample_loader: DataLoader | None,
         device: torch.device,
@@ -42,6 +43,7 @@ class CycleNetTrainer:
         self.ema_model = ema_model
         self.sched = sched
         self.optimizer = optimizer
+        self.scaler = scaler
         self.dataloader = dataloader
         self.sample_loader = sample_loader
         self.sample_iter = iter(sample_loader) if sample_loader is not None else None
@@ -79,11 +81,9 @@ class CycleNetTrainer:
         # -- Setup tensorboard writer
         self.writer = SummaryWriter(log_dir=str(self.tb_dir)) if self.is_main else None
 
-        # -- Create GradScaler
-        self.scaler = GradScaler()
-
         self.model.train()
-        self.ema_model.eval()
+        if self.ema_model is not None:
+            self.ema_model.eval()
 
     def train(self, steps: int):
         """
@@ -219,6 +219,9 @@ class CycleNetTrainer:
         """
         
         """
+        if not self.is_main or self.ema_model is None:
+            return
+        
         for p_ema, p_model in zip(self.ema_model.parameters(), unwrap(self.model).parameters()):
             p_ema.mul_(self.ema_decay).add_(p_model, alpha=1.0 - self.ema_decay)        
 
@@ -239,7 +242,7 @@ class CycleNetTrainer:
         """
         Saves model checkpoint (model, EMA, DomainEmbedding)
         """
-        if not self.is_main:
+        if not self.is_main or self.ema_model is None:
             return
 
         ckpt_path = Path(self.train_dir) / "checkpoints" / f"step-{step}.ckpt"
@@ -248,6 +251,7 @@ class CycleNetTrainer:
             "model": unwrap(self.model).state_dict(),
             "ema_model": self.ema_model.state_dict(),
             "optimizer": self.optimizer.state_dict(),
+            "scaler": self.scaler.state_dict(),
             "step": step,
             "epoch": epoch,
         }, ckpt_path)
@@ -260,7 +264,8 @@ class CycleNetTrainer:
         model = unwrap(self.model)
 
         model.eval()
-        self.ema_model.eval()
+        if self.ema_model is not None:
+            self.ema_model.eval()
 
         # -------------------------
         # Define source / target indices (x_src is all source)

@@ -2,11 +2,11 @@
 # Run
 # =========================
 run:
-  name: "model_1"
-  runs_dir: "/develop/code/runs/cyclenet/remote_sensing"
+  name: "oem_seg"
+  runs_dir: "/develop/code/runs/cyclenet/remote_sensing/seg"
 
   # -- UNet Backbone ckpt
-  unet_ckpt: "/develop/code/runs/unet/remote_sensing/training/checkpoints/step-400000.ckpt"
+  unet_ckpt: "/develop/code/runs/unet/remote_sensing/oem_only/training/checkpoints/step-400000.ckpt"
 
   seed: 42
 
@@ -29,14 +29,18 @@ model:
   consis_weight: 0.1
   invar_weight: 0.1
 
+  num_seg_classes: 8
+
 # =========================
 # Dataset
 # =========================
 data:
-  src_dir: /cgi/data/nvesd/workspaces/logan/data/remote_sensing/tiled/sim
-  tgt_dir: /cgi/data/nvesd/workspaces/logan/data/remote_sensing/tiled/real
+  src_dir: /cgi/data/nvesd/workspaces/logan/data/remote_sensing/tiled/sim/synrs3d
+  tgt_dir: /cgi/data/nvesd/workspaces/logan/data/remote_sensing/tiled/real/OEM
 
-  rgb_parent_dir: opt
+  rgb_parent_dirs:
+    - opt
+    - pre_opt
   label_parent_dir: gt_ss_mask
 
   image_size: 256

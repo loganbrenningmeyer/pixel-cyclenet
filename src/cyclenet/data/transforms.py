@@ -140,7 +140,7 @@ def load_cyclenet_transforms(transform_id: int = 0, image_size: int = 224) -> A.
     # -- [0] No augmentations
     if transform_id == 0:
         return A.Compose([
-            A.Resize(image_size, image_size, interpolation=cv2.INTER_LINEAR),
+            A.Resize(image_size, image_size, interpolation=cv2.INTER_LINEAR, mask_interpolation=cv2.INTER_NEAREST),
             A.Normalize(mean=mean, std=std),
             ToTensorV2(),
         ])
@@ -148,7 +148,7 @@ def load_cyclenet_transforms(transform_id: int = 0, image_size: int = 224) -> A.
     # -- [1] Mild augmentations (flip only)
     elif transform_id == 1:
         return A.Compose([
-            A.Resize(image_size, image_size, interpolation=cv2.INTER_LINEAR),
+            A.Resize(image_size, image_size, interpolation=cv2.INTER_LINEAR, mask_interpolation=cv2.INTER_NEAREST),
             A.HorizontalFlip(p=0.5),
             A.Normalize(mean=mean, std=std),
             ToTensorV2(),
@@ -157,7 +157,7 @@ def load_cyclenet_transforms(transform_id: int = 0, image_size: int = 224) -> A.
     # -- [2] Stronger augmentations (crop / flip, mild photometric augs)
     elif transform_id == 2:
         return A.Compose([
-            A.Resize(image_size, image_size, interpolation=cv2.INTER_LINEAR),
+            A.Resize(image_size, image_size, interpolation=cv2.INTER_LINEAR, mask_interpolation=cv2.INTER_NEAREST),
 
             # -- Only flip
             A.HorizontalFlip(p=0.5),
@@ -183,7 +183,7 @@ def load_cyclenet_transforms(transform_id: int = 0, image_size: int = 224) -> A.
     # -------------------------
     elif transform_id == 3:
         return A.Compose([
-            A.Resize(image_size, image_size, interpolation=cv2.INTER_LINEAR),
+            A.Resize(image_size, image_size, interpolation=cv2.INTER_LINEAR, mask_interpolation=cv2.INTER_NEAREST),
 
             A.HorizontalFlip(p=0.5),
             A.VerticalFlip(p=0.5),

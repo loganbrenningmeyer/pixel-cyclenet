@@ -138,8 +138,24 @@ def main():
     transforms = load_cyclenet_transforms(config.data.transform_id, config.data.image_size)
 
     # -- Create real / sim datasets + concatenate [real, sim]
-    real_ds = CycleDomainDataset(config.data.tgt_dir, domain_idx=1, transforms=transforms)
-    sim_ds  = CycleDomainDataset(config.data.src_dir, domain_idx=0, transforms=transforms)
+    rgb_parent_dirs = set(config.data.rgb_parent_dirs) if config.data.get("rgb_parent_dirs") is not None else None
+
+    real_ds = CycleDomainDataset(
+        data_dir=config.data.tgt_dir, 
+        rgb_parent_dirs=rgb_parent_dirs,
+        domain_idx=1, 
+        transforms=transforms,
+    )
+    sim_ds  = CycleDomainDataset(
+        data_dir=config.data.src_dir, 
+        rgb_parent_dirs=rgb_parent_dirs,
+        domain_idx=0, 
+        transforms=transforms,
+    )
+
+    if is_main:
+        print(f"( Real Dataset ): {len(real_ds)} images")
+        print(f"( Sim Dataset ): {len(sim_ds)} images")
 
     dataset = ConcatDataset([real_ds, sim_ds])
 
@@ -165,7 +181,11 @@ def main():
     # -------------------------
     # Source Samples Dataset / DataLoader (only main rank)
     # -------------------------
-    sample_dataset = SourceDataset(config.data.src_dir, image_size=config.data.image_size)
+    sample_dataset = SourceDataset(
+        src_dir=config.data.src_dir, 
+        image_size=config.data.image_size,
+        rgb_parent_dirs=rgb_parent_dirs,
+    )
 
     sample_loader = None
     if is_main:
@@ -217,9 +237,12 @@ def main():
         d_dim=unet_config.model.d_dim
     ).to(device)
 
-    ema_model = copy.deepcopy(model).to(device)
-    for p in ema_model.parameters():
-        p.requires_grad_(False)
+    # -- EMA only on rank 0
+    ema_model = None
+    if is_main:
+        ema_model = copy.deepcopy(model).to(device)
+        for p in ema_model.parameters():
+            p.requires_grad_(False)
 
     # -------------------------
     # Create Optimizer 
@@ -251,8 +274,9 @@ def main():
     if is_ddp:
         model = DDP(model, device_ids=[local_rank], output_device=local_rank, broadcast_buffers=False)
         
-        for p_ema, p_model in zip(ema_model.parameters(), unwrap(model).parameters()):
-            p_ema.data.copy_(p_model.data)
+        if is_main:
+            for p_ema, p_model in zip(ema_model.parameters(), unwrap(model).parameters()):
+                p_ema.data.copy_(p_model.data)
 
     # -------------------------
     # Create CycleNetTrainer / Run training

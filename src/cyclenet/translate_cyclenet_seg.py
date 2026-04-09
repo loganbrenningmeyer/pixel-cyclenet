@@ -95,13 +95,16 @@ def main():
     # Source Samples Dataset / DataLoader
     # -------------------------
     num_seg_classes = cyclenet_config.model.num_seg_classes
+    
+    rgb_parent_dirs = set(translate_config.data.rgb_parent_dirs) if translate_config.data.get("rgb_parent_dirs") is not None else None
+    label_parent_dir = translate_config.data.get("label_parent_dir")
 
     dataset = TranslateSegDataset(
         src_dir=translate_config.data.src_dir,
         image_size=translate_config.data.image_size,
         num_classes=num_seg_classes,
-        rgb_parent_dir=translate_config.data.rgb_parent_dir,
-        label_parent_dir=translate_config.data.label_parent_dir,
+        rgb_parent_dirs=rgb_parent_dirs,
+        label_parent_dir=label_parent_dir,
     )
 
     # -- Create subset per-rank

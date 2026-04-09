@@ -5,8 +5,9 @@ import numpy as np
 import torch
 import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
-from pathlib import Path
 from torch.utils.data import DataLoader, ConcatDataset
+from torch.amp import GradScaler
+from pathlib import Path
 from omegaconf import OmegaConf, DictConfig
 
 from cyclenet.training import UNetTrainer
@@ -24,12 +25,20 @@ def ddp_setup():
     Returns: (is_ddp, rank, local_rank, world_size)
     """
     if "RANK" in os.environ and "WORLD_SIZE" in os.environ:
-        dist.init_process_group(backend="nccl")
         rank = int(os.environ["RANK"])
         local_rank = int(os.environ["LOCAL_RANK"])
         world_size = int(os.environ["WORLD_SIZE"])
+
         torch.cuda.set_device(local_rank)
+        dist.init_process_group(
+            backend="nccl",
+            rank=rank,
+            world_size=world_size,
+            device_id=local_rank,
+        )
+
         return True, rank, local_rank, world_size
+    
     return False, 0, 0, 1
 
 
@@ -82,7 +91,7 @@ def make_adamw_param_groups(model: UNet, domain_emb: DomainEmbedding, weight_dec
 
 def main():
     # -------------------------
-    # Parse args / load + save config
+    # Parse args / load config
     # -------------------------
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=str, required=True)
@@ -126,8 +135,24 @@ def main():
     transforms = load_unet_transforms(config.data.transform_id, config.data.image_size)
 
     # -- Create real / sim datasets + concatenate [real, sim]
-    real_ds = DomainDataset(config.data.tgt_dir, domain_idx=1, transforms=transforms)
-    sim_ds  = DomainDataset(config.data.src_dir, domain_idx=0, transforms=transforms)
+    rgb_parent_dirs = set(config.data.rgb_parent_dirs) if config.data.get("rgb_parent_dirs") is not None else None
+
+    real_ds = DomainDataset(
+        data_dir=config.data.tgt_dir, 
+        domain_idx=1, 
+        transforms=transforms,
+        rgb_parent_dirs=rgb_parent_dirs,
+    )
+    sim_ds = DomainDataset(
+        data_dir=config.data.src_dir, 
+        domain_idx=0, 
+        transforms=transforms,
+        rgb_parent_dirs=rgb_parent_dirs,
+    )
+
+    if is_main:
+        print(f"( Real Dataset ): {len(real_ds)} images")
+        print(f"( Sim Dataset ): {len(sim_ds)} images")
 
     dataset = ConcatDataset([real_ds, sim_ds])
 
@@ -185,24 +210,9 @@ def main():
     optimizer = torch.optim.AdamW(param_groups, lr=config.train.lr)
 
     # -------------------------
-    # Resume Training
+    # Create GradScaler
     # -------------------------
-    start_step = 1
-    start_epoch = 1
-
-    if config.run.resume.enable:
-        ckpt_path = train_dir / "checkpoints" / config.run.resume.ckpt_name
-
-        ckpt = torch.load(str(ckpt_path), map_location="cpu")
-        model.load_state_dict(ckpt["model"])
-        ema_model.load_state_dict(ckpt["ema_model"])
-        domain_emb.load_state_dict(ckpt["domain_emb"])
-        optimizer.load_state_dict(ckpt["optimizer"])
-        start_step = int(ckpt["step"]) + 1
-        start_epoch = int(ckpt["epoch"]) + 1
-
-        if is_main:
-            print(f"\n==== Resuming {config.run.resume.ckpt_name} from step {ckpt['step']} ====")
+    scaler = GradScaler(device="cuda")
 
     # -------------------------
     # Create DiffusionSchedule
@@ -223,10 +233,8 @@ def main():
         model = DDP(model, device_ids=[local_rank], output_device=local_rank, broadcast_buffers=False)
         domain_emb = DDP(domain_emb, device_ids=[local_rank], output_device=local_rank, broadcast_buffers=False)
 
-        # -- Only sync EMA on new training runs
-        if not config.run.resume.enable:
-            for p_ema, p_model in zip(ema_model.parameters(), unwrap(model).parameters()):
-                p_ema.data.copy_(p_model.data)
+        for p_ema, p_model in zip(ema_model.parameters(), unwrap(model).parameters()):
+            p_ema.data.copy_(p_model.data)
 
     # -------------------------
     # Create UNetTrainer / run training
@@ -237,6 +245,7 @@ def main():
         domain_emb=domain_emb,
         sched=sched,
         optimizer=optimizer,
+        scaler=scaler,
         dataloader=dataloader,
         device=device,
         train_dir=train_dir,
@@ -244,8 +253,8 @@ def main():
         sample_config=config.sampling,
         ema_decay=config.train.ema_decay,
         is_main=is_main,
-        start_step=start_step,
-        start_epoch=start_epoch,
+        start_step=1,
+        start_epoch=1,
     )
 
     try:

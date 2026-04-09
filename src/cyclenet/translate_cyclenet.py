@@ -94,7 +94,13 @@ def main():
     # -------------------------
     # Source Samples Dataset / DataLoader
     # -------------------------
-    dataset = TranslateDataset(translate_config.data.src_dir, image_size=translate_config.data.image_size)
+    rgb_parent_dirs = set(translate_config.data.rgb_parent_dirs) if translate_config.data.get("rgb_parent_dirs") is not None else None
+
+    dataset = TranslateDataset(
+        src_dir=translate_config.data.src_dir, 
+        rgb_parent_dirs=rgb_parent_dirs,
+        image_size=translate_config.data.image_size,
+    )
 
     # -- Create subset per-rank
     indices = list(range(rank, len(dataset), world_size))

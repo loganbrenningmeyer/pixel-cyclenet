@@ -20,7 +20,7 @@ class CycleNetTrainerSeg:
     def __init__(
         self,
         model: CycleNet,
-        ema_model: CycleNet,
+        ema_model: CycleNet | None,
         sched: DiffusionSchedule,
         optimizer: Optimizer,
         scaler: GradScaler,
@@ -82,7 +82,8 @@ class CycleNetTrainerSeg:
         self.writer = SummaryWriter(log_dir=str(self.tb_dir)) if self.is_main else None
 
         self.model.train()
-        self.ema_model.eval()
+        if self.ema_model is not None:
+            self.ema_model.eval()
 
     def train(self, steps: int):
         """
@@ -224,6 +225,9 @@ class CycleNetTrainerSeg:
         """
         
         """
+        if not self.is_main or self.ema_model is None:
+            return
+
         for p_ema, p_model in zip(self.ema_model.parameters(), unwrap(self.model).parameters()):
             p_ema.mul_(self.ema_decay).add_(p_model, alpha=1.0 - self.ema_decay)        
 
@@ -244,7 +248,7 @@ class CycleNetTrainerSeg:
         """
         Saves model checkpoint (model, EMA, DomainEmbedding)
         """
-        if not self.is_main:
+        if not self.is_main or self.ema_model is None:
             return
 
         ckpt_path = Path(self.train_dir) / "checkpoints" / f"step-{step}.ckpt"
@@ -266,7 +270,8 @@ class CycleNetTrainerSeg:
         model = unwrap(self.model)
 
         model.eval()
-        self.ema_model.eval()
+        if self.ema_model is not None:
+            self.ema_model.eval()
 
         # -------------------------
         # Define source / target indices (x_src is all source)

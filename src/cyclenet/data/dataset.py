@@ -69,7 +69,7 @@ class DomainDataset(Dataset):
         domain_idx: int, 
         transforms: Compose, 
         file_exts: set[str] = {".jpg", ".png", ".tif", ".tiff"},
-        parent_dirs: set[str] | None = None,
+        rgb_parent_dirs: set[str] | None = None,
     ):
         # ----------
         # Store domain paths with domain index
@@ -82,8 +82,8 @@ class DomainDataset(Dataset):
                 continue
 
             # -- Check allowed parent directory
-            if parent_dirs is not None:
-                if path.parent.name not in parent_dirs:
+            if rgb_parent_dirs is not None:
+                if path.parent.name not in rgb_parent_dirs:
                     continue
             
             # -- Append sample if all checks pass
@@ -112,7 +112,7 @@ class CycleDomainDataset(Dataset):
         domain_idx: int, 
         transforms: Compose, 
         file_exts: set[str] = {".jpg", ".png", ".tif", ".tiff"},
-        parent_dirs: set[str] | None = None,
+        rgb_parent_dirs: set[str] | None = None,
     ):
         self.samples = []
         for path in sorted(Path(data_dir).rglob("*")):
@@ -121,8 +121,8 @@ class CycleDomainDataset(Dataset):
                 continue
 
             # -- Check allowed parent directory
-            if parent_dirs is not None:
-                if path.parent.name not in parent_dirs:
+            if rgb_parent_dirs is not None:
+                if path.parent.name not in rgb_parent_dirs:
                     continue
 
             self.samples.append(path)
@@ -156,14 +156,14 @@ class CycleDomainSegDataset(Dataset):
         transforms: Compose,
         num_classes: int,
         file_exts: set[str] = {".jpg", ".png", ".tif", ".tiff"},
-        rgb_parent_dir: str = "opt",
+        rgb_parent_dirs: set[str] = {"opt", "pre_opt"},
         label_parent_dir: str = "gt_ss_mask",
     ):
         self.samples = []
         self.domain_idx = int(domain_idx)
         self.transforms = transforms
         self.num_classes = num_classes
-        self.rgb_parent_dir = rgb_parent_dir
+        self.rgb_parent_dirs = rgb_parent_dirs
         self.label_parent_dir = label_parent_dir
 
         for path in sorted(Path(data_dir).rglob("*")):
@@ -174,7 +174,7 @@ class CycleDomainSegDataset(Dataset):
             # -------------------------
             # Derive label path from RGB filenames
             # -------------------------
-            if path.parent.name != rgb_parent_dir:
+            if path.parent.name not in rgb_parent_dirs:
                 continue
 
             label_path = path.parent.parent / self.label_parent_dir / path.name
@@ -205,15 +205,29 @@ class CycleDomainSegDataset(Dataset):
 
 
 class SourceDataset(Dataset):
-    def __init__(self, src_dir: str, image_size: int = 224):
+    def __init__(
+        self, 
+        src_dir: str, 
+        image_size: int = 224,
+        file_exts: set[str] = {".jpg", ".png", ".tif", ".tiff"},
+        rgb_parent_dirs: set[str] | None = None,
+    ):
         # -------------------------
         # Store all images in src_dir
         # -------------------------
         self.samples = []
 
         for path in sorted(Path(src_dir).rglob("*")):
-            if path.suffix.lower() in {".jpg", ".png"}:
-                self.samples.append(path)
+            # -- Check file extension
+            if path.suffix.lower() not in file_exts:
+                continue
+
+            # -- Check allowed parent directory
+            if rgb_parent_dirs is not None:
+                if path.parent.name not in rgb_parent_dirs:
+                    continue
+
+            self.samples.append(path)
 
         # -------------------------
         # Define transforms
@@ -242,12 +256,12 @@ class SourceSegDataset(Dataset):
         image_size: int,
         num_classes: int,
         file_exts: set[str] = {".jpg", ".png", ".tif", ".tiff"},
-        rgb_parent_dir: str = "opt",
+        rgb_parent_dirs: set[str] = {"opt", "pre_opt"},
         label_parent_dir: str = "gt_ss_mask",
     ):
         self.samples = []
         self.src_dir = Path(src_dir)
-        self.rgb_parent_dir = rgb_parent_dir
+        self.rgb_parent_dirs = rgb_parent_dirs
         self.label_parent_dir = label_parent_dir
         self.transforms = load_source_transforms(image_size)
         self.num_classes = num_classes
@@ -260,7 +274,7 @@ class SourceSegDataset(Dataset):
             # -------------------------
             # Derive label path from RGB filenames
             # -------------------------
-            if path.parent.name != rgb_parent_dir:
+            if path.parent.name not in rgb_parent_dirs:
                 continue
 
             label_path = path.parent.parent / self.label_parent_dir / path.name
@@ -288,14 +302,27 @@ class SourceSegDataset(Dataset):
     
 
 class TranslateDataset(Dataset):
-    def __init__(self, src_dir: str, image_size: int = 224):
+    def __init__(
+        self, 
+        src_dir: str, 
+        image_size: int = 224,
+        file_exts: set[str] = {".jpg", ".png", ".tif", ".tiff"},
+        rgb_parent_dirs: set[str] = {"opt"},
+    ):
         # -------------------------
         # Store all images in src_dir
         # -------------------------
         self.samples = []
 
         for path in sorted(Path(src_dir).rglob("*")):
-            if path.suffix.lower() in {".jpg", ".png"}:
+            # -- Check file extension
+            if path.suffix.lower() not in file_exts:
+                continue
+
+            # -- Check allowed parent directory
+            if rgb_parent_dirs is not None:
+                if path.parent.name not in rgb_parent_dirs:
+                    continue
                 self.samples.append(path)
 
         self.samples = sorted(self.samples)
@@ -327,12 +354,12 @@ class TranslateSegDataset(Dataset):
         image_size: int,
         num_classes: int,
         file_exts: set[str] = {".jpg", ".png", ".tif", ".tiff"},
-        rgb_parent_dir: str = "opt",
+        rgb_parent_dirs: set[str] = {"opt"},
         label_parent_dir: str = "gt_ss_mask",
     ):
         self.samples = []
         self.src_dir = Path(src_dir)
-        self.rgb_parent_dir = rgb_parent_dir
+        self.rgb_parent_dirs = rgb_parent_dirs
         self.label_parent_dir = label_parent_dir
         self.transforms = load_source_transforms(image_size)
         self.num_classes = num_classes
@@ -345,7 +372,7 @@ class TranslateSegDataset(Dataset):
             # -------------------------
             # Derive label path from RGB filenames
             # -------------------------
-            if path.parent.name != rgb_parent_dir:
+            if path.parent.name not in rgb_parent_dirs:
                 continue
 
             label_path = path.parent.parent / self.label_parent_dir / path.name
