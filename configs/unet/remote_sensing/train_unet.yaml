@@ -1,0 +1,82 @@
+# =========================
+# Run
+# =========================
+run:
+  name: "all_real"
+  runs_dir: "/develop/code/runs/unet/remote_sensing"
+
+  resume:
+    enable: 0
+    ckpt_name: null
+
+  seed: 42
+
+# =========================
+# Training
+# =========================
+train:
+  steps: 600000
+  batch_size: 64
+  lr: 1e-4
+  weight_decay: 1e-4
+  ema_decay: 0.9999
+
+# =========================
+# Model
+# =========================
+model:
+  base_ch: 128
+  t_dim: 512
+  d_dim: 128
+  ch_mults: [1,2,4,4]
+
+  num_res_blocks: 2
+  enc_heads: [0,0,0,4]
+  mid_heads: 4
+
+  res_dropout: 0
+  attn_dropout: 0
+  ffn_dropout: 0
+
+# =========================
+# Dataset
+# =========================
+data:
+  src_dir: /cgi/data/nvesd/workspaces/logan/data/remote_sensing/tiled/sim
+  tgt_dir: /cgi/data/nvesd/workspaces/logan/data/remote_sensing/tiled/real
+
+  rgb_parent_dirs:
+    - opt
+    - pre_opt
+
+  image_size: 256
+  transform_id: 3       # ( 3 ): Remote sensing specific augmentations
+
+# =========================
+# Diffusion
+# =========================
+diffusion:
+  schedule: linear
+  T: 1000
+  beta_start: 0.0001
+  beta_end: 0.02
+  s: 0.008
+  target: eps
+
+# =========================
+# Logging
+# =========================
+logging:
+  loss_interval: 10
+  ckpt_interval: 10000
+  sample_interval: 5000
+
+# =========================
+# Sampling
+# =========================
+sampling:
+  shape: [3, 256, 256]
+  sampler: ddim
+  ddim_steps: 50
+  eta: 0
+  num_samples: 16
