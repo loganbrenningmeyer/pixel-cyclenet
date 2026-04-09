@@ -10,4 +10,3 @@ data/mnist/
 torch_datasets/
 .codex
 utils/
-CycleNet/
