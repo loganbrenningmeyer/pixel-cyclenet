@@ -8,7 +8,6 @@ Icon?
 data/fashion/
 data/mnist/
 torch_datasets/
-CycleNet/
 .codex
 utils/
-info/
+CycleNet/
