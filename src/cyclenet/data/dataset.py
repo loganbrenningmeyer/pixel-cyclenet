@@ -323,7 +323,8 @@ class TranslateDataset(Dataset):
             if rgb_parent_dirs is not None:
                 if path.parent.name not in rgb_parent_dirs:
                     continue
-                self.samples.append(path)
+
+            self.samples.append(path)
 
         self.samples = sorted(self.samples)
 

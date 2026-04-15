@@ -1,0 +1,94 @@
+# Translate a small deterministic source subset with several segmentation-aware
+# CycleNet settings, then compare each candidate against a fixed real-image
+# reference subset.
+
+# =========================
+# Run
+# =========================
+run:
+  run_dir: /develop/code/runs/cyclenet/remote_sensing/seg/oem_only_seg
+
+# =========================
+# Model
+# =========================
+model:
+  num_seg_classes: 8
+
+# =========================
+# Dataset
+# =========================
+data:
+  src_dir: /cgi/data/nvesd/workspaces/logan/data/remote_sensing/tiled/sim/synrs3d
+  # -- [Source Domain] - (0): Sim, (1): Real
+  src_idx: 0
+
+  # -- Required for seg runs: RGB images whose immediate parent matches these
+  # -- names are paired with masks under label_parent_dir.
+  rgb_parent_dirs:
+    - opt
+  label_parent_dir: gt_ss_mask
+
+  image_size: 256
+
+# =========================
+# Sampling
+# =========================
+sampling:
+  batch_size: 16
+  sampler: ddim
+  ddim_steps: 100
+  eta: 0
+
+# =========================
+# Sweep
+# =========================
+sweep:
+  # -- Required: these are the only checkpoints evaluated.
+  checkpoints:
+    - step-10000.ckpt
+    - step-20000.ckpt
+    - step-30000.ckpt
+    - step-40000.ckpt
+
+  # -- Required: these are the only CFG / strength values evaluated.
+  cfg_weights: [1.0, 2.0, 3.0, 4.0, 5.0]
+  noise_strengths: [0.1, 0.2, 0.3, 0.4, 0.5]
+
+# =========================
+# Evaluation
+# =========================
+eval:
+  out_dir: /develop/code/eval/cyclenet/remote_sensing/translate_sweep/oem_only_seg
+
+  # -- If null, defaults to the CycleNet training config's data.tgt_dir.
+  real_dir: null
+  real_rgb_parent_dirs: null
+
+  source_sample_size: 256
+  real_sample_size: 512
+  seed: 42
+  # -- Reuse source_manifest.csv / real_manifest.csv and reference images when present.
+  reuse_references: true
+  # -- Set true to intentionally resample and rewrite reference/source and reference/real.
+  refresh_references: false
+  # -- Reused for every candidate so comparisons use the same translation noise.
+  translation_seed: 42
+  num_workers: 2
+
+  # -- Supported:
+  # --   fid / clip: translated sim vs fixed real reference subset realism metrics
+  # --   lpips: source sim vs translated sim preservation metric
+  metrics: [fid, clip, lpips]
+  torch_home: /cgi/home/lmbdnz/.cache/torch
+  inception_weights_path: /cgi/home/lmbdnz/.cache/torch/hub/checkpoints/weights-inception-2015-12-05-6726825d.pth
+  clip_model_path: /cgi/data/nvesd/workspaces/logan/data/pre_trained_models/clip
+  clip_local_files_only: true
+  # -- projected: standard CLIP image embedding; pooler: vision tower pooled hidden state.
+  clip_feature_layer: pooler
+  clip_batch_size: 64
+  plot_clip_umap: true
+  umap_random_state: 42
+  compute_source_baseline: true
+
+  # -- Usually ema_model for CycleNet checkpoints.
+  model_key: ema_model

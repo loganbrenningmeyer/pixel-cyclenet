@@ -2,11 +2,11 @@
 # Run
 # =========================
 run:
-  name: "oem_seg"
+  name: "oem_only_seg"
   runs_dir: "/develop/code/runs/cyclenet/remote_sensing/seg"
 
   # -- UNet Backbone ckpt
-  unet_ckpt: "/develop/code/runs/unet/remote_sensing/oem_only/training/checkpoints/step-400000.ckpt"
+  unet_ckpt: "/develop/code/runs/unet/remote_sensing/oem_only/training/checkpoints/step-450000.ckpt"
 
   seed: 42
 
@@ -40,7 +40,6 @@ data:
 
   rgb_parent_dirs:
     - opt
-    - pre_opt
   label_parent_dir: gt_ss_mask
 
   image_size: 256
@@ -58,7 +57,7 @@ logging:
 # Sampling
 # =========================
 sampling:
-  num_samples: 16
+  num_samples: 8
   sampler: ddim
   ddim_steps: 50
   eta: 0

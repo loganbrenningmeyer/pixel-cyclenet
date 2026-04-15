@@ -2,19 +2,22 @@
 # Run
 # =========================
 run:
-  run_dir: /develop/code/runs/cyclenet/augs_2_updown
-  ckpt_name: step-15000.ckpt
+  run_dir: /develop/code/runs/cyclenet/remote_sensing/oem_only
+  ckpt_name: step-20000.ckpt
 
 # =========================
 # Dataset
 # =========================
 data:
-  src_dir: /cgi/data/nvesd/workspaces/logan/data/ehd_organized/RGB_Filtered/train/sim
+  src_dir: /cgi/data/nvesd/workspaces/logan/data/remote_sensing/tiled/sim/synrs3d
   # -- [Source Domain] - (0): Sim, (1): Real
   src_idx: 0
 
-  out_dir: /cgi/data/nvesd/workspaces/logan/data/ehd_organized/RGB_Filtered/train/cyclenet_sim/updown/step-15000_strength-0.5_cfg-3.0
-  image_size: 224
+  rgb_parent_dirs:
+    - opt
+
+  out_dir: /cgi/data/nvesd/workspaces/logan/data/remote_sensing/tiled/cyclenet_sim/synrs3d/oem_only/step-20000_strength-0.3_cfg-3.0
+  image_size: 256
 
 # =========================
 # Sampling
@@ -25,4 +28,4 @@ sampling:
   ddim_steps: 100
   eta: 0
   cfg_weight: 3.0
-  noise_strength: 0.5
+  noise_strength: 0.3

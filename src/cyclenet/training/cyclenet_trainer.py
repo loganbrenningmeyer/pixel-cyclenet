@@ -300,17 +300,6 @@ class CycleNetTrainer:
             for cfg_weight in cfg_weights:
                 # -- DDPM
                 if sampler.lower() == "ddpm":
-                    model_samples, x_noise = cyclenet_ddpm_loop(
-                        model=model, 
-                        x_src=x_src, 
-                        src_idx=src_idx, 
-                        tgt_idx=tgt_idx,
-                        c_img=x_src_ctrl,
-                        sched=self.sched,
-                        w=cfg_weight,
-                        strength=noise_strength
-                    )
-
                     ema_samples, x_noise = cyclenet_ddpm_loop(
                         model=self.ema_model, 
                         x_src=x_src, 
@@ -326,19 +315,6 @@ class CycleNetTrainer:
                 elif sampler.lower() == "ddim":
                     num_steps = self.sample_config.ddim_steps
                     eta = self.sample_config.eta
-
-                    model_samples, x_noise = cyclenet_ddim_loop(
-                        model=model, 
-                        x_src=x_src, 
-                        src_idx=src_idx, 
-                        tgt_idx=tgt_idx,
-                        c_img=x_src_ctrl,
-                        sched=self.sched,
-                        w=cfg_weight,
-                        strength=noise_strength,
-                        num_steps=num_steps,
-                        eta=eta
-                    )
 
                     ema_samples, x_noise = cyclenet_ddim_loop(
                         model=self.ema_model, 
@@ -365,9 +341,7 @@ class CycleNetTrainer:
                     out_dir = samples_dir / strength_str / cfg_str
                     out_dir.mkdir(parents=True, exist_ok=True)
 
-                    model_grid = self.save_samples(model_samples, out_dir/ "model.png")
                     ema_grid = self.save_samples(ema_samples, out_dir / "ema.png")
-                    self.writer.add_image(f"figs/model/{strength_str}_{cfg_str}", model_grid, step)
                     self.writer.add_image(f"figs/ema/{strength_str}_{cfg_str}", ema_grid, step)
 
             # -------------------------

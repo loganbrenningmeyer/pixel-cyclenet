@@ -2,8 +2,8 @@
 # Run
 # =========================
 run:
-  run_dir: /develop/code/runs/cyclenet/remote_sensing/model_1
-  ckpt_name: step-15000.ckpt
+  run_dir: /develop/code/runs/cyclenet/remote_sensing/seg/oem_only_seg
+  ckpt_name: step-20000.ckpt
 
 # =========================
 # Model
@@ -15,7 +15,7 @@ model:
 # Dataset
 # =========================
 data:
-  src_dir: /cgi/data/nvesd/workspaces/logan/data/remote_sensing/tiled/sim
+  src_dir: /cgi/data/nvesd/workspaces/logan/data/remote_sensing/tiled/sim/synrs3d
 
   rgb_parent_dirs: 
     - opt
@@ -24,7 +24,7 @@ data:
   # -- [Source Domain] - (0): Sim, (1): Real
   src_idx: 0
 
-  out_dir: /cgi/data/nvesd/workspaces/logan/data/remote_sensing/tiled/cyclenet_sim/model_1
+  out_dir: /cgi/data/nvesd/workspaces/logan/data/remote_sensing/tiled/cyclenet_sim/synrs3d/oem_only_seg/step-20000_strength-0.3_cfg-3.0
   image_size: 256
 
 # =========================
@@ -36,4 +36,4 @@ sampling:
   ddim_steps: 100
   eta: 0
   cfg_weight: 3.0
-  noise_strength: 0.5
+  noise_strength: 0.3
