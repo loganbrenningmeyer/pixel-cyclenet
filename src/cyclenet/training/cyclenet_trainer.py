@@ -28,14 +28,11 @@ class CycleNetTrainer:
         sample_loader: DataLoader | None,
         device: torch.device,
         train_dir: str,
+        model_config: DictConfig,
         log_config: DictConfig,
         sample_config: DictConfig,
         ema_decay: float,
         is_main: bool,
-        recon_weight: float = 1.0,
-        cycle_weight: float = 0.01,
-        consis_weight: float = 0.1,
-        invar_weight: float = 0.1,
         start_step: int = 1,
         start_epoch: int = 1,
     ):
@@ -48,6 +45,7 @@ class CycleNetTrainer:
         self.sample_loader = sample_loader
         self.sample_iter = iter(sample_loader) if sample_loader is not None else None
         self.device = device
+        self.model_config = model_config
         self.log_config = log_config
         self.sample_config = sample_config
         self.ema_decay = ema_decay
@@ -56,10 +54,10 @@ class CycleNetTrainer:
         self.start_epoch = start_epoch
 
         # -- Loss weights
-        self.recon_weight = recon_weight
-        self.cycle_weight = cycle_weight
-        self.consis_weight = consis_weight
-        self.invar_weight = invar_weight
+        self.recon_weight = model_config.recon_weight
+        self.cycle_weight = model_config.cycle_weight
+        self.consis_weight = model_config.consis_weight
+        self.invar_weight = model_config.invar_weight
 
         # -- Track running averages of losses
         self._recon_hist = deque(maxlen=100)
@@ -180,7 +178,8 @@ class CycleNetTrainer:
                 t=t,
                 src_idx=src_idx,
                 tgt_idx=tgt_idx,
-                sched=self.sched
+                sched=self.sched,
+                invar_unet_grad=self.model_config.invar_unet_grad,
             )
 
             loss = (

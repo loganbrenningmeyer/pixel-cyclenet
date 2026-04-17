@@ -12,6 +12,11 @@ data:
   src_dir: /cgi/data/nvesd/workspaces/logan/data/remote_sensing/tiled/sim/synrs3d
   # -- [Source Domain] - (0): Sim, (1): Real
   src_idx: 0
+  # -- Optional dataset sharding across independent translation runs.
+  # -- For two concurrent runs, set num_shards: 2 in both configs and use
+  # -- shard_index: 0 for the first run and shard_index: 1 for the second.
+  num_shards: 1
+  shard_index: 0
 
   rgb_parent_dirs:
     - opt

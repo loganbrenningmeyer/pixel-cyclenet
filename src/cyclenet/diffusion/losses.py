@@ -47,6 +47,7 @@ def cyclenet_loss(
     src_idx: torch.Tensor,
     tgt_idx: torch.Tensor,
     sched: DiffusionSchedule,
+    invar_unet_grad: bool = False,
 ) -> dict[str, torch.Tensor]:
     """
 
@@ -104,7 +105,7 @@ def cyclenet_loss(
         from_idx=src_idx,
         to_idx=tgt_idx,
         c_img=x_0_ctrl,
-        no_unet_grad=True,
+        enable_unet_grad=False,
     )
 
     # -- Predict clean y_0 / detached y_0 for c_img conditioning
@@ -148,6 +149,21 @@ def cyclenet_loss(
     # => \mathcal{L}_{x \to y \to y} = \mathbb{E}_{x_0,\epsilon_x} \Vert \epsilon_\theta(x_t,c_y,x_0) - \epsilon_\theta(x_t,c_y,\bar{y}_0) \Vert_2^2 \\
     # -------------------------
     # => \epsilon_\theta(x_t, c_{x \to y}, \bar y_0)
+
+    # -- x2y forward pass with gradients enabled
+    if invar_unet_grad:
+        eps_xt_x2y_x0_invar = model.forward(
+            x_t=x_t, 
+            t=t, 
+            from_idx=src_idx,
+            to_idx=tgt_idx,
+            c_img=x_0_ctrl,
+            enable_unet_grad=True,     # allow forward pass grads to invariance loss
+        )
+    # -- If no U-Net grad, use previous no grad pass
+    else:
+        eps_xt_x2y_x0_invar = eps_xt_x2y_x0
+
     eps_xt_y2y_y0 = model.forward(
         x_t=x_t,
         t=t,
@@ -156,7 +172,7 @@ def cyclenet_loss(
         c_img=y_0_cond,
     )
 
-    invar_loss = F.mse_loss(eps_xt_x2y_x0, eps_xt_y2y_y0.detach())
+    invar_loss = F.mse_loss(eps_xt_x2y_x0_invar, eps_xt_y2y_y0.detach())
 
     return {
         "recon": recon_loss,
@@ -191,6 +207,7 @@ def cyclenet_loss_seg(
     src_idx: torch.Tensor,
     tgt_idx: torch.Tensor,
     sched: DiffusionSchedule,
+    invar_unet_grad: bool = False,
 ) -> dict[str, torch.Tensor]:
     """
 
@@ -249,7 +266,7 @@ def cyclenet_loss_seg(
         from_idx=src_idx,
         to_idx=tgt_idx,
         c_img=c_x0_seg,
-        no_unet_grad=True,
+        enable_unet_grad=False,
     )
 
     # -- Predict clean y_0 / detached y_0 for c_img conditioning
@@ -293,6 +310,21 @@ def cyclenet_loss_seg(
     # => \mathcal{L}_{x \to y \to y} = \mathbb{E}_{x_0,\epsilon_x} \Vert \epsilon_\theta(x_t,c_y,x_0) - \epsilon_\theta(x_t,c_y,\bar{y}_0) \Vert_2^2 \\
     # -------------------------
     # => \epsilon_\theta(x_t, c_{x \to y}, \bar y_0)
+
+    # -- x2y forward pass with gradients enabled
+    if invar_unet_grad:
+        eps_xt_x2y_x0_invar = model.forward(
+            x_t=x_t,
+            t=t,
+            from_idx=src_idx,
+            to_idx=tgt_idx,
+            c_img=c_x0_seg,
+            enable_unet_grad=True,
+        )
+    # -- If no U-Net grad, use previous no grad pass
+    else:
+        eps_xt_x2y_x0_invar = eps_xt_x2y_x0
+
     eps_xt_y2y_y0 = model.forward(
         x_t=x_t,
         t=t,
@@ -301,7 +333,7 @@ def cyclenet_loss_seg(
         c_img=c_y0_seg,
     )
 
-    invar_loss = F.mse_loss(eps_xt_x2y_x0, eps_xt_y2y_y0.detach())
+    invar_loss = F.mse_loss(eps_xt_x2y_x0_invar, eps_xt_y2y_y0.detach())
 
     return {
         "recon": recon_loss,

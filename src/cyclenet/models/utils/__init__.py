@@ -1,6 +1,7 @@
-from .nn import ContextIdentity, zero_module 
+from .nn import ContextIdentity, zero_module, unwrap
 
 __all__ = [
     "ContextIdentity",
-    "zero_module"
+    "zero_module",
+    "unwrap",
 ]

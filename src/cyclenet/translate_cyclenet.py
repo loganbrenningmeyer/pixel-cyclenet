@@ -63,6 +63,15 @@ def main():
 
     translate_config = load_config(args.config)
 
+    num_shards = int(OmegaConf.select(translate_config, "data.num_shards", default=1))
+    shard_index = int(OmegaConf.select(translate_config, "data.shard_index", default=0))
+    if num_shards < 1:
+        raise ValueError(f"data.num_shards must be >= 1, got {num_shards}.")
+    if shard_index < 0 or shard_index >= num_shards:
+        raise ValueError(
+            f"data.shard_index must be in [0, {num_shards - 1}], got {shard_index}."
+        )
+
     # -------------------------
     # [Saved models]: Load CycleNet config / UNet backbone config
     # -------------------------
@@ -86,7 +95,10 @@ def main():
     out_dir = Path(translate_config.data.out_dir)
     if is_main:
         out_dir.mkdir(parents=True, exist_ok=True)
-        save_config(translate_config, out_dir / "config.yaml")
+        config_name = "config.yaml"
+        if num_shards > 1:
+            config_name = f"config.shard-{shard_index}-of-{num_shards}.yaml"
+        save_config(translate_config, out_dir / config_name)
 
     if is_ddp:
         dist.barrier()
@@ -102,13 +114,21 @@ def main():
         image_size=translate_config.data.image_size,
     )
 
-    # -- Create subset per-rank
-    indices = list(range(rank, len(dataset), world_size))
+    shard_indices = list(range(shard_index, len(dataset), num_shards))
+
+    # -- Create subset per-run shard, then shard that work across DDP ranks.
+    indices = shard_indices[rank::world_size]
     subset = Subset(dataset, indices)
+
+    if is_main:
+        print(
+            f"Shard {shard_index + 1}/{num_shards}: "
+            f"{len(shard_indices)} of {len(dataset)} images selected."
+        )
 
     dataloader = DataLoader(
         subset,
-        batch_size=translate_config.sampling.batch_size // world_size,
+        batch_size=max(1, translate_config.sampling.batch_size // world_size),
         shuffle=False,
         num_workers=2,
         pin_memory=True,

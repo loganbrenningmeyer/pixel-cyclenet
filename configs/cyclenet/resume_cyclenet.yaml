@@ -1,0 +1,21 @@
+# =========================
+# Run
+# =========================
+run:
+  run_dir: /develop/code/runs/cyclenet/remote_sensing/all_real
+  ckpt_name: step-20000.ckpt
+  # -- Optional if changing loss weights on resume
+  out_run_dir: /develop/code/runs/cyclenet/remote_sensing/all_real_ft_invar
+
+# =========================
+# Training
+# =========================
+train:
+  total_steps: 30000
+
+# =========================
+# Model (optional resume-time overrides)
+# =========================
+model:
+  invar_weight: 0.2
+  # invar_unet_grad: true

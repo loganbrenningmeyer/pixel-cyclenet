@@ -103,6 +103,37 @@ def required_sweep_values(config: DictConfig, key: str) -> list[Any]:
     return values
 
 
+def parse_ignore_pairs(config: DictConfig, key: str = "sweep.ignore_pairs") -> set[tuple[float, float]]:
+    value = OmegaConf.select(config, key)
+    if value is None:
+        return set()
+
+    pairs = []
+    for item in list(value):
+        if isinstance(item, str):
+            parts = [p.strip() for p in item.split(",")]
+            if len(parts) != 2:
+                raise ValueError(f"Ignore pair string must have two comma-separated values: {item}")
+            noise_strength, cfg_weight = float(parts[0]), float(parts[1])
+        elif OmegaConf.is_list(item) or isinstance(item, (list, tuple)):
+            if len(item) != 2:
+                raise ValueError(f"Ignore pair sequence must have length 2: {item}")
+            noise_strength, cfg_weight = float(item[0]), float(item[1])
+        else:
+            noise_strength = OmegaConf.select(item, "noise_strength")
+            cfg_weight = OmegaConf.select(item, "cfg_weight")
+            if noise_strength is None or cfg_weight is None:
+                raise ValueError(
+                    "Ignore pair entries must be [noise_strength, cfg_weight], "
+                    "'noise_strength,cfg_weight', or {noise_strength: ..., cfg_weight: ...}."
+                )
+            noise_strength, cfg_weight = float(noise_strength), float(cfg_weight)
+
+        pairs.append((noise_strength, cfg_weight))
+
+    return set(pairs)
+
+
 def gather_image_paths(
     root: str | Path,
     rgb_parent_dirs: set[str] | None = None,
@@ -504,34 +535,48 @@ def clip_mmd_rbf(fake_feats: np.ndarray, real_feats: np.ndarray) -> float:
     return float(max(xx + yy - 2.0 * xy, 0.0))
 
 
-def write_clip_umap(
-    source_feats: np.ndarray,
-    fake_feats: np.ndarray,
-    real_feats: np.ndarray,
-    source_paths: list[Path],
-    fake_paths: list[Path],
-    real_paths: list[Path],
-    out_dir: Path,
-    random_state: int,
-) -> dict[str, str]:
+def pca_project(feats: np.ndarray) -> np.ndarray:
+    if feats.shape[0] < 2:
+        return np.zeros((feats.shape[0], 2), dtype=np.float64)
+
+    centered = feats.astype(np.float64) - feats.mean(axis=0, keepdims=True)
+    _u, _s, vt = np.linalg.svd(centered, full_matrices=False)
+    comps = vt[:2].T
+    coords = centered @ comps
+
+    if coords.shape[1] == 1:
+        coords = np.concatenate([coords, np.zeros((coords.shape[0], 1))], axis=1)
+    return coords[:, :2]
+
+
+def tsne_project(feats: np.ndarray, random_state: int, requested_perplexity: float) -> np.ndarray:
     try:
-        import umap
+        from sklearn.manifold import TSNE
     except Exception as exc:
-        return {"clip_umap_error": f"{type(exc).__name__}: {exc}"}
+        raise RuntimeError(
+            "t-SNE requires scikit-learn. Install it in the environment with "
+            "`pip install scikit-learn` or use the updated project dependency list."
+        ) from exc
 
-    feats = np.concatenate([source_feats, fake_feats, real_feats], axis=0)
-    labels = (
-        ["source_sim"] * len(source_feats)
-        + ["translated_sim"] * len(fake_feats)
-        + ["real"] * len(real_feats)
+    n = feats.shape[0]
+    if n < 3:
+        return np.zeros((n, 2), dtype=np.float64)
+
+    max_perplexity = max(1.0, float(n - 1) / 3.0)
+    perplexity = min(float(requested_perplexity), max_perplexity)
+
+    reducer = TSNE(
+        n_components=2,
+        random_state=random_state,
+        perplexity=perplexity,
+        init="pca",
+        learning_rate="auto",
     )
-    paths = source_paths + fake_paths + real_paths
+    return reducer.fit_transform(feats)
 
-    reducer = umap.UMAP(n_components=2, random_state=random_state)
-    coords = reducer.fit_transform(feats)
 
-    csv_path = out_dir / "clip_umap.csv"
-    with csv_path.open("w", newline="") as f:
+def write_projection_csv(coords: np.ndarray, labels: list[str], paths: list[Path], out_path: Path):
+    with out_path.open("w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=["label", "x", "y", "path"])
         writer.writeheader()
         for label, xy, path in zip(labels, coords, paths):
@@ -542,16 +587,14 @@ def write_clip_umap(
                 "path": str(path),
             })
 
-    svg_path = out_dir / "clip_umap.svg"
-    write_umap_svg(coords, labels, paths, svg_path)
 
-    return {
-        "clip_umap_csv": str(csv_path),
-        "clip_umap_svg": str(svg_path),
-    }
-
-
-def write_umap_svg(coords: np.ndarray, labels: list[str], paths: list[Path], out_path: Path):
+def write_projection_svg(
+    coords: np.ndarray,
+    labels: list[str],
+    paths: list[Path],
+    out_path: Path,
+    title: str,
+):
     width = 900
     height = 700
     pad = 50
@@ -577,7 +620,7 @@ def write_umap_svg(coords: np.ndarray, labels: list[str], paths: list[Path], out
     parts = [
         f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">',
         '<rect width="100%" height="100%" fill="white"/>',
-        '<text x="50" y="34" font-family="Arial, sans-serif" font-size="20" fill="#111827">CLIP UMAP</text>',
+        f'<text x="50" y="34" font-family="Arial, sans-serif" font-size="20" fill="#111827">{html.escape(title)}</text>',
     ]
 
     lx = width - 210
@@ -585,18 +628,141 @@ def write_umap_svg(coords: np.ndarray, labels: list[str], paths: list[Path], out
     for i, (label, text) in enumerate(legend):
         y = ly + i * 24
         parts.append(f'<circle cx="{lx}" cy="{y}" r="6" fill="{colors[label]}" opacity="0.85"/>')
-        parts.append(f'<text x="{lx + 14}" y="{y + 5}" font-family="Arial, sans-serif" font-size="14" fill="#111827">{text}</text>')
+        parts.append(
+            f'<text x="{lx + 14}" y="{y + 5}" font-family="Arial, sans-serif" font-size="14" fill="#111827">{text}</text>'
+        )
 
     for x, y, label, path in zip(px, py, labels, paths):
-        title = html.escape(f"{label}: {path}")
+        title_text = html.escape(f"{label}: {path}")
         parts.append(
             f'<circle cx="{x:.2f}" cy="{y:.2f}" r="3.5" fill="{colors[label]}" opacity="0.62">'
-            f"<title>{title}</title>"
+            f"<title>{title_text}</title>"
             "</circle>"
         )
 
     parts.append("</svg>")
     out_path.write_text("\n".join(parts))
+
+
+def clip_projection_inputs(
+    source_feats: np.ndarray,
+    fake_feats: np.ndarray,
+    real_feats: np.ndarray,
+    source_paths: list[Path],
+    fake_paths: list[Path],
+    real_paths: list[Path],
+) -> tuple[np.ndarray, list[str], list[Path]]:
+    feats = np.concatenate([source_feats, fake_feats, real_feats], axis=0)
+    labels = (
+        ["source_sim"] * len(source_feats)
+        + ["translated_sim"] * len(fake_feats)
+        + ["real"] * len(real_feats)
+    )
+    paths = source_paths + fake_paths + real_paths
+    return feats, labels, paths
+
+
+def write_clip_pca(
+    source_feats: np.ndarray,
+    fake_feats: np.ndarray,
+    real_feats: np.ndarray,
+    source_paths: list[Path],
+    fake_paths: list[Path],
+    real_paths: list[Path],
+    out_dir: Path,
+) -> dict[str, str]:
+    feats, labels, paths = clip_projection_inputs(
+        source_feats=source_feats,
+        fake_feats=fake_feats,
+        real_feats=real_feats,
+        source_paths=source_paths,
+        fake_paths=fake_paths,
+        real_paths=real_paths,
+    )
+    coords = pca_project(feats)
+
+    csv_path = out_dir / "clip_pca.csv"
+    write_projection_csv(coords, labels, paths, csv_path)
+
+    svg_path = out_dir / "clip_pca.svg"
+    write_projection_svg(coords, labels, paths, svg_path, "CLIP PCA")
+
+    return {
+        "clip_pca_csv": str(csv_path),
+        "clip_pca_svg": str(svg_path),
+    }
+
+
+def write_clip_tsne(
+    source_feats: np.ndarray,
+    fake_feats: np.ndarray,
+    real_feats: np.ndarray,
+    source_paths: list[Path],
+    fake_paths: list[Path],
+    real_paths: list[Path],
+    out_dir: Path,
+    random_state: int,
+    perplexity: float,
+) -> dict[str, str]:
+    feats, labels, paths = clip_projection_inputs(
+        source_feats=source_feats,
+        fake_feats=fake_feats,
+        real_feats=real_feats,
+        source_paths=source_paths,
+        fake_paths=fake_paths,
+        real_paths=real_paths,
+    )
+    coords = tsne_project(feats, random_state=random_state, requested_perplexity=perplexity)
+
+    csv_path = out_dir / "clip_tsne.csv"
+    write_projection_csv(coords, labels, paths, csv_path)
+
+    svg_path = out_dir / "clip_tsne.svg"
+    write_projection_svg(coords, labels, paths, svg_path, "CLIP t-SNE")
+
+    return {
+        "clip_tsne_csv": str(csv_path),
+        "clip_tsne_svg": str(svg_path),
+    }
+
+
+def write_clip_umap(
+    source_feats: np.ndarray,
+    fake_feats: np.ndarray,
+    real_feats: np.ndarray,
+    source_paths: list[Path],
+    fake_paths: list[Path],
+    real_paths: list[Path],
+    out_dir: Path,
+    random_state: int,
+) -> dict[str, str]:
+    try:
+        import umap
+    except Exception as exc:
+        return {"clip_umap_error": f"{type(exc).__name__}: {exc}"}
+
+    feats, labels, paths = clip_projection_inputs(
+        source_feats=source_feats,
+        fake_feats=fake_feats,
+        real_feats=real_feats,
+        source_paths=source_paths,
+        fake_paths=fake_paths,
+        real_paths=real_paths,
+    )
+
+    reducer = umap.UMAP(n_components=2, random_state=random_state)
+    coords = reducer.fit_transform(feats)
+
+    csv_path = out_dir / "clip_umap.csv"
+    write_projection_csv(coords, labels, paths, csv_path)
+
+    svg_path = out_dir / "clip_umap.svg"
+    write_projection_svg(coords, labels, paths, svg_path, "CLIP UMAP")
+
+    return {
+        "clip_umap_csv": str(csv_path),
+        "clip_umap_svg": str(svg_path),
+    }
 
 
 def write_metrics(metrics_rows: list[dict[str, Any]], out_dir: Path):
@@ -990,7 +1156,12 @@ def main():
     checkpoints = [checkpoint_name(v) for v in required_sweep_values(config, "sweep.checkpoints")]
     cfg_weights = [float(v) for v in required_sweep_values(config, "sweep.cfg_weights")]
     noise_strengths = [float(v) for v in required_sweep_values(config, "sweep.noise_strengths")]
+    ignore_pairs = parse_ignore_pairs(config)
     model_key = str(cfg_select(config, "eval.model_key", "ema_model"))
+
+    if is_main and ignore_pairs:
+        ignored = ", ".join(f"(strength={s:g}, cfg={w:g})" for s, w in sorted(ignore_pairs))
+        print(f"Skipping configured sweep pairs: {ignored}")
 
     sampler = str(config.sampling.sampler)
     ddim_steps = int(config.sampling.ddim_steps)
@@ -1007,6 +1178,9 @@ def main():
 
         for noise_strength in noise_strengths:
             for cfg_weight in cfg_weights:
+                if (noise_strength, cfg_weight) in ignore_pairs:
+                    continue
+
                 torch.manual_seed(translation_seed)
                 if torch.cuda.is_available():
                     torch.cuda.manual_seed_all(translation_seed)
@@ -1074,6 +1248,32 @@ def main():
                         try:
                             fake_feats = get_clip_embeddings_fn(normalize_paths(fake_paths))
                             row.update(compute_clip_metrics_from_feats(fake_feats, real_feats))
+
+                            if bool(cfg_select(config, "eval.plot_clip_pca", True)):
+                                row.update(write_clip_pca(
+                                    source_feats=source_feats,
+                                    fake_feats=fake_feats,
+                                    real_feats=real_feats,
+                                    source_paths=source_ref_paths,
+                                    fake_paths=fake_paths,
+                                    real_paths=real_ref_paths,
+                                    out_dir=combo_dir,
+                                ))
+
+                            if bool(cfg_select(config, "eval.plot_clip_tsne", True)):
+                                tsne_state = int(cfg_select(config, "eval.tsne_random_state", seed))
+                                tsne_perplexity = float(cfg_select(config, "eval.tsne_perplexity", 30.0))
+                                row.update(write_clip_tsne(
+                                    source_feats=source_feats,
+                                    fake_feats=fake_feats,
+                                    real_feats=real_feats,
+                                    source_paths=source_ref_paths,
+                                    fake_paths=fake_paths,
+                                    real_paths=real_ref_paths,
+                                    out_dir=combo_dir,
+                                    random_state=tsne_state,
+                                    perplexity=tsne_perplexity,
+                                ))
 
                             if bool(cfg_select(config, "eval.plot_clip_umap", True)):
                                 umap_state = int(cfg_select(config, "eval.umap_random_state", seed))

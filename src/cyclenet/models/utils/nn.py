@@ -1,4 +1,3 @@
-import torch
 import torch.nn as nn
 
 
@@ -17,3 +16,10 @@ def zero_module(module: nn.Module):
     for p in module.parameters():
         p.detach().zero_()
     return module
+
+
+def unwrap(m: nn.Module):
+    """
+    Unwraps DDP module if it is wrapped
+    """
+    return m.module if hasattr(m, "module") else m

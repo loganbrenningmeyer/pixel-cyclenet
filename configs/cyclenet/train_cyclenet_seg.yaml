@@ -28,6 +28,7 @@ model:
   cycle_weight: 0.01
   consis_weight: 0.1
   invar_weight: 0.1
+  invar_unet_grad: true
 
   num_seg_classes: 8
 

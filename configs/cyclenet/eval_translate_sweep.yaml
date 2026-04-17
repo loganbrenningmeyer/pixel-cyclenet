@@ -5,7 +5,7 @@
 # Run
 # =========================
 run:
-  run_dir: /develop/code/runs/cyclenet/remote_sensing/oem_only
+  run_dir: /develop/code/runs/cyclenet/remote_sensing/all_real
 
 # =========================
 # Dataset
@@ -37,27 +37,37 @@ sampling:
 sweep:
   # -- Required: these are the only checkpoints evaluated.
   checkpoints:
-    - step-10000.ckpt
-    - step-20000.ckpt
-    - step-30000.ckpt
-    - step-40000.ckpt
+    - step-15000.ckpt
 
   # -- Required: these are the only CFG / strength values evaluated.
   cfg_weights: [1.0, 2.0, 3.0, 4.0, 5.0]
   noise_strengths: [0.1, 0.2, 0.3, 0.4, 0.5]
 
+  # -- List of [cfg, noise strength] pairs to skip
+  ignore_pairs:
+    - [0.2, 2.0]
+    - [0.2, 3.0]
+    - [0.2, 4.0]
+    - [0.3, 2.0]
+    - [0.3, 3.0]
+    - [0.3, 4.0]
+    - [0.4, 2.0]
+    - [0.4, 3.0]
+    - [0.4, 4.0]
+
 # =========================
 # Evaluation
 # =========================
 eval:
-  out_dir: /develop/code/eval/cyclenet/remote_sensing/translate_sweep/oem_only
+  out_dir: /develop/code/eval/cyclenet/remote_sensing/translate_sweep/all_real_edges
 
   # -- If null, defaults to the CycleNet training config's data.tgt_dir.
-  real_dir: null
-  real_rgb_parent_dirs: null
+  real_dir: /cgi/data/nvesd/workspaces/logan/data/remote_sensing/tiled/real/OEM
+  real_rgb_parent_dirs:
+    - opt
 
-  source_sample_size: 512
-  real_sample_size: 1024
+  source_sample_size: 256
+  real_sample_size: 512
   seed: 42
   # -- Reuse source_manifest.csv / real_manifest.csv and reference images when present.
   reuse_references: true

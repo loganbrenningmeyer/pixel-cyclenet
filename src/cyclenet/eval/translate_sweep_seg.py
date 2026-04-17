@@ -103,6 +103,37 @@ def required_sweep_values(config: DictConfig, key: str) -> list[Any]:
     return values
 
 
+def parse_ignore_pairs(config: DictConfig, key: str = "sweep.ignore_pairs") -> set[tuple[float, float]]:
+    value = OmegaConf.select(config, key)
+    if value is None:
+        return set()
+
+    pairs = []
+    for item in list(value):
+        if isinstance(item, str):
+            parts = [p.strip() for p in item.split(",")]
+            if len(parts) != 2:
+                raise ValueError(f"Ignore pair string must have two comma-separated values: {item}")
+            noise_strength, cfg_weight = float(parts[0]), float(parts[1])
+        elif OmegaConf.is_list(item) or isinstance(item, (list, tuple)):
+            if len(item) != 2:
+                raise ValueError(f"Ignore pair sequence must have length 2: {item}")
+            noise_strength, cfg_weight = float(item[0]), float(item[1])
+        else:
+            noise_strength = OmegaConf.select(item, "noise_strength")
+            cfg_weight = OmegaConf.select(item, "cfg_weight")
+            if noise_strength is None or cfg_weight is None:
+                raise ValueError(
+                    "Ignore pair entries must be [noise_strength, cfg_weight], "
+                    "'noise_strength,cfg_weight', or {noise_strength: ..., cfg_weight: ...}."
+                )
+            noise_strength, cfg_weight = float(noise_strength), float(cfg_weight)
+
+        pairs.append((noise_strength, cfg_weight))
+
+    return set(pairs)
+
+
 def gather_image_paths(
     root: str | Path,
     rgb_parent_dirs: set[str] | None = None,
@@ -1004,7 +1035,12 @@ def main():
     checkpoints = [checkpoint_name(v) for v in required_sweep_values(config, "sweep.checkpoints")]
     cfg_weights = [float(v) for v in required_sweep_values(config, "sweep.cfg_weights")]
     noise_strengths = [float(v) for v in required_sweep_values(config, "sweep.noise_strengths")]
+    ignore_pairs = parse_ignore_pairs(config)
     model_key = str(cfg_select(config, "eval.model_key", "ema_model"))
+
+    if is_main and ignore_pairs:
+        ignored = ", ".join(f"(strength={s:g}, cfg={w:g})" for s, w in sorted(ignore_pairs))
+        print(f"Skipping configured sweep pairs: {ignored}")
 
     sampler = str(config.sampling.sampler)
     ddim_steps = int(config.sampling.ddim_steps)
@@ -1021,6 +1057,9 @@ def main():
 
         for noise_strength in noise_strengths:
             for cfg_weight in cfg_weights:
+                if (noise_strength, cfg_weight) in ignore_pairs:
+                    continue
+
                 torch.manual_seed(translation_seed)
                 if torch.cuda.is_available():
                     torch.cuda.manual_seed_all(translation_seed)

@@ -44,7 +44,7 @@ class CycleNet(nn.Module):
         from_idx: torch.Tensor,
         to_idx: torch.Tensor,
         c_img: torch.Tensor,
-        no_unet_grad: bool = False,
+        enable_unet_grad: bool = True,
     ) -> torch.Tensor:
         """
         
@@ -82,7 +82,7 @@ class CycleNet(nn.Module):
 
             h, skips = self.backbone.encode(x_t, t_emb, to_emb, to_ctx)
 
-        if no_unet_grad:
+        if not enable_unet_grad:
             # -------------------------
             # Disable UNet backbone Decoder / FinalLayer gradients
             # -------------------------
@@ -106,7 +106,7 @@ class CycleNet(nn.Module):
         # -------------------------
         h = self.backbone.final(h)
 
-        if no_unet_grad:
+        if not enable_unet_grad:
             # -------------------------
             # Re-enable UNet backbone Decoder / FinalLayer gradients
             # -------------------------

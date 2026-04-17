@@ -2,11 +2,11 @@
 # Run
 # =========================
 run:
-  name: "oem"
+  name: "all_real_invar_grad_full"
   runs_dir: "/develop/code/runs/cyclenet/remote_sensing"
 
   # -- UNet Backbone ckpt
-  unet_ckpt: "/develop/code/runs/unet/remote_sensing/oem_only/training/checkpoints/step-400000.ckpt"
+  unet_ckpt: "/develop/code/runs/unet/remote_sensing/all_real/training/checkpoints/step-400000.ckpt"
 
   seed: 42
 
@@ -29,12 +29,14 @@ model:
   consis_weight: 0.1
   invar_weight: 0.1
 
+  invar_unet_grad: true
+
 # =========================
 # Dataset
 # =========================
 data:
   src_dir: /cgi/data/nvesd/workspaces/logan/data/remote_sensing/tiled/sim/synrs3d
-  tgt_dir: /cgi/data/nvesd/workspaces/logan/data/remote_sensing/tiled/real/OEM
+  tgt_dir: /cgi/data/nvesd/workspaces/logan/data/remote_sensing/tiled/real
 
   rgb_parent_dirs: 
     - opt
@@ -55,7 +57,7 @@ logging:
 # Sampling
 # =========================
 sampling:
-  num_samples: 16
+  num_samples: 8
   sampler: ddim
   ddim_steps: 50
   eta: 0

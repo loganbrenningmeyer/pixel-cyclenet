@@ -571,70 +571,80 @@ def main():
     # -------------------------
     # Edit these values for each sweep analysis.
     # -------------------------
-    metrics_path = Path(
-        "/develop/code/eval/cyclenet/remote_sensing/translate_sweep/oem_only_seg/metrics.csv"
-    )
-    out_dir: Path | None = Path("/develop/code/eval/cyclenet/remote_sensing/translate_sweep/oem_only_seg/analysis_real-0.75_pres-0.25_lpips-0.2")
+    model_names = ["all_real"]
 
-    top_k = 15
-    realism_weight = 0.75
-    preservation_weight = 0.27
+    for model_name in model_names:
+        
+        sweep_dir = Path("/develop/code/eval/cyclenet/remote_sensing/translate_sweep") / model_name
+        metrics_path = sweep_dir / "metrics.csv"
 
-    # Set to a float, for example 0.30, if you want preservation to favor a
-    # moderate amount of change instead of always favoring lower LPIPS.
-    lpips_target: float | None = 0.2
+        top_k = 15
 
-    # Set to a float to prevent high-distortion candidates from winning the
-    # ranking. Ineligible candidates remain in ranked_candidates.csv with their
-    # raw score in selection_score_raw.
-    max_lpips: float | None = 0.30
+        weights = [(0.5, 0.5), (0.7, 0.3), (0.75, 0.25), (0.85, 0.15), (0.90, 0.10)]
+        lpips_vals = [(0.20, 0.30), (None, None)]
 
-    make_plots = True
-    heatmap_metrics = [
-        "selection_score",
-        "realism_score",
-        "real_fid",
-        "real_clip_frechet",
-        "real_clip_mmd_rbf",
-        "source_lpips_mean",
-    ]
+        for realism_weight, preservation_weight in weights:
+            for lpips_target, max_lpips in lpips_vals:
 
-    out_dir = out_dir if out_dir is not None else metrics_path.parent / "analysis"
-    plots_dir = out_dir / "plots"
-    out_dir.mkdir(parents=True, exist_ok=True)
-    plots_dir.mkdir(parents=True, exist_ok=True)
+                run_name = f"real-{realism_weight:.2f}_pres-{preservation_weight:.2f}"
 
-    rows = read_metrics(metrics_path)
-    baseline = find_baseline(rows)
-    candidates = [row for row in rows if is_candidate(row)]
-    if not candidates:
-        raise RuntimeError(f"No translated candidate rows found in {metrics_path}.")
+                if lpips_target and max_lpips:
+                    lpips_stats = f"_lpips-[{lpips_target:.2f},{max_lpips:.2f}]"
+                elif lpips_target:
+                    lpips_stats = f"_lpips-{lpips_target:.2f}"
+                elif max_lpips:
+                    lpips_stats = f"_lpips-max-{max_lpips:.2f}"
+                else:
+                    lpips_stats = ""
 
-    add_baseline_deltas(candidates, baseline)
-    add_scores(
-        candidates,
-        realism_weight=realism_weight,
-        preservation_weight=preservation_weight,
-        lpips_target=lpips_target,
-        max_lpips=max_lpips,
-    )
-    ranked = sort_candidates(candidates)
+                out_dir: Path | None = sweep_dir / "analysis" / (run_name + lpips_stats)
 
-    write_rows(ranked, out_dir / "ranked_candidates.csv")
-    if baseline is not None:
-        write_rows([baseline], out_dir / "source_baseline.csv")
-    write_summary(ranked, baseline, out_dir / "summary.txt", top_k=top_k)
+                make_plots = True
+                heatmap_metrics = [
+                    "selection_score",
+                    "realism_score",
+                    "real_fid",
+                    "real_clip_frechet",
+                    "real_clip_mmd_rbf",
+                    "source_lpips_mean",
+                ]
 
-    if make_plots:
-        plot_top_bars(ranked, plots_dir, top_k)
-        plot_realism_vs_lpips(ranked, plots_dir, top_k)
-        plot_best_by_checkpoint(candidates, plots_dir)
-        plot_metric_correlations(candidates, plots_dir)
-        plot_heatmaps(candidates, heatmap_metrics, plots_dir)
+                out_dir = out_dir if out_dir is not None else metrics_path.parent / "analysis"
+                plots_dir = out_dir / "plots"
+                out_dir.mkdir(parents=True, exist_ok=True)
+                plots_dir.mkdir(parents=True, exist_ok=True)
 
-    print(f"Wrote analysis to {out_dir}")
-    print(f"Best candidate: {row_label(ranked[0])}")
-    print(f"Summary: {out_dir / 'summary.txt'}")
+                rows = read_metrics(metrics_path)
+                baseline = find_baseline(rows)
+                candidates = [row for row in rows if is_candidate(row)]
+                if not candidates:
+                    raise RuntimeError(f"No translated candidate rows found in {metrics_path}.")
+
+                add_baseline_deltas(candidates, baseline)
+                add_scores(
+                    candidates,
+                    realism_weight=realism_weight,
+                    preservation_weight=preservation_weight,
+                    lpips_target=lpips_target,
+                    max_lpips=max_lpips,
+                )
+                ranked = sort_candidates(candidates)
+
+                write_rows(ranked, out_dir / "ranked_candidates.csv")
+                if baseline is not None:
+                    write_rows([baseline], out_dir / "source_baseline.csv")
+                write_summary(ranked, baseline, out_dir / "summary.txt", top_k=top_k)
+
+                if make_plots:
+                    plot_top_bars(ranked, plots_dir, top_k)
+                    plot_realism_vs_lpips(ranked, plots_dir, top_k)
+                    plot_best_by_checkpoint(candidates, plots_dir)
+                    plot_metric_correlations(candidates, plots_dir)
+                    plot_heatmaps(candidates, heatmap_metrics, plots_dir)
+
+                print(f"Wrote analysis to {out_dir}")
+                print(f"Best candidate: {row_label(ranked[0])}")
+                print(f"Summary: {out_dir / 'summary.txt'}")
 
 
 if __name__ == "__main__":
