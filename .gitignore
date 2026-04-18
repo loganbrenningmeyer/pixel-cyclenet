@@ -11,3 +11,5 @@ torch_datasets/
 .codex
 utils/
 CycleNet/
+data/
+outputs/
