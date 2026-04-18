@@ -104,6 +104,20 @@ def _resolve_optional_bool(override_value, saved_value: bool) -> bool:
     raise ValueError(f"Invalid boolean override: {override_value!r}")
 
 
+def _resolve_positive_int(override_value, saved_value: int, *, field_name: str) -> int:
+    """
+    Resolves an optional positive integer override from OmegaConf / YAML.
+    """
+    if override_value is None:
+        return saved_value
+
+    value = int(override_value)
+    if value <= 0:
+        raise ValueError(f"{field_name} must be > 0, got {value}.")
+
+    return value
+
+
 def resolve_model_config(
     source_config: DictConfig,
     resume_config: DictConfig,
@@ -143,16 +157,71 @@ def resolve_model_config(
     return resolved_model_config, changed
 
 
+def resolve_train_config(
+    source_config: DictConfig,
+    resume_config: DictConfig,
+) -> tuple[DictConfig, bool]:
+    """
+    Resolves the active train config from the saved config plus optional
+    resume-time overrides.
+    """
+    resolved_train_config = copy.deepcopy(source_config.train)
+    changed = False
+
+    saved_lr = float(OmegaConf.select(source_config, "train.lr"))
+    override_lr = OmegaConf.select(resume_config, "train.lr")
+    active_lr = saved_lr if override_lr is None else float(override_lr)
+    resolved_train_config.lr = active_lr
+
+    if active_lr != saved_lr:
+        changed = True
+
+    return resolved_train_config, changed
+
+
+def resolve_logging_config(
+    source_config: DictConfig,
+    resume_config: DictConfig,
+) -> tuple[DictConfig, bool]:
+    """
+    Resolves the active logging config from the saved config plus optional
+    resume-time overrides.
+    """
+    resolved_logging_config = copy.deepcopy(source_config.logging)
+    changed = False
+
+    logging_keys = ("loss_interval", "ckpt_interval", "sample_interval")
+
+    for key in logging_keys:
+        saved_value = int(OmegaConf.select(source_config, f"logging.{key}"))
+        override_value = OmegaConf.select(resume_config, f"logging.{key}")
+        active_value = _resolve_positive_int(
+            override_value,
+            saved_value,
+            field_name=f"logging.{key}",
+        )
+        resolved_logging_config[key] = active_value
+
+        if active_value != saved_value:
+            changed = True
+
+    return resolved_logging_config, changed
+
+
 def make_output_config(
     source_config: DictConfig,
     resolved_model_config: DictConfig,
+    resolved_train_config: DictConfig,
+    resolved_logging_config: DictConfig,
     out_run_dir: Path,
 ) -> DictConfig:
     """
-    Creates the config to save for a fine-tune branch with updated model config.
+    Creates the config to save for a fine-tune branch with updated runtime config.
     """
     output_config = copy.deepcopy(source_config)
     output_config.model = copy.deepcopy(resolved_model_config)
+    output_config.train = copy.deepcopy(resolved_train_config)
+    output_config.logging = copy.deepcopy(resolved_logging_config)
 
     output_config.run.runs_dir = str(out_run_dir.parent)
     output_config.run.name = out_run_dir.name
@@ -205,18 +274,30 @@ def main():
     # Resolve model config / output run dir
     # -------------------------
     model_config, model_config_changed = resolve_model_config(source_config, resume_config)
+    train_config, train_config_changed = resolve_train_config(source_config, resume_config)
+    logging_config, logging_config_changed = resolve_logging_config(source_config, resume_config)
 
     out_run_dir_value = OmegaConf.select(resume_config, "run.out_run_dir")
+    branch_required = model_config_changed or train_config_changed
+    branch_requested = out_run_dir_value is not None
+    save_output_config = branch_required or (logging_config_changed and branch_requested)
 
-    if model_config_changed:
+    if branch_required:
         if out_run_dir_value is None:
             raise ValueError(
-                "If resuming with changed model settings, resume config must set run.out_run_dir."
+                "If resuming with changed model or train settings, resume config must set run.out_run_dir."
             )
-
+    
+    if save_output_config:
         run_dir = Path(out_run_dir_value)
         train_dir = run_dir / "training"
-        output_config = make_output_config(source_config, model_config, run_dir)
+        output_config = make_output_config(
+            source_config,
+            model_config,
+            train_config,
+            logging_config,
+            run_dir,
+        )
     else:
         run_dir = source_run_dir
         train_dir = source_train_dir
@@ -228,13 +309,19 @@ def main():
     if is_main:
         train_dir.mkdir(parents=True, exist_ok=True)
 
-        if model_config_changed:
+        if save_output_config:
             save_config(output_config, train_dir / "config.yaml")
 
         save_config(resume_config, train_dir / "resume_config.yaml")
 
-        if model_config_changed:
+        if branch_required:
             print(f"Starting fine-tune branch in {run_dir}")
+        elif logging_config_changed and branch_requested:
+            print(f"Starting logging-override branch in {run_dir}")
+        else:
+            print(f"Continuing run in {run_dir}")
+
+        if model_config_changed or train_config_changed or logging_config_changed:
             print(
                 "Model config: "
                 f"recon={model_config.recon_weight}, "
@@ -243,8 +330,13 @@ def main():
                 f"invar={model_config.invar_weight}, "
                 f"invar_unet_grad={model_config.invar_unet_grad}"
             )
-        else:
-            print(f"Continuing run in {run_dir}")
+            print(f"Train config: lr={train_config.lr}")
+            print(
+                "Logging config: "
+                f"loss_interval={logging_config.loss_interval}, "
+                f"ckpt_interval={logging_config.ckpt_interval}, "
+                f"sample_interval={logging_config.sample_interval}"
+            )
 
     if is_ddp:
         dist.barrier()
@@ -365,7 +457,7 @@ def main():
     # -------------------------
     param_groups = make_adamw_param_groups(model, source_config.train.weight_decay)
 
-    optimizer = torch.optim.AdamW(param_groups, lr=source_config.train.lr)
+    optimizer = torch.optim.AdamW(param_groups, lr=train_config.lr)
 
     # -------------------------
     # Create GradScaler
@@ -385,7 +477,12 @@ def main():
         optimizer.load_state_dict(ckpt["optimizer"])
         scaler.load_state_dict(ckpt["scaler"]) if "scaler" in ckpt else None
 
-    start_step = int(ckpt["step"]) + 1
+        if train_config_changed:
+            for param_group in optimizer.param_groups:
+                param_group["lr"] = train_config.lr
+
+    ckpt_step = int(ckpt["step"])
+    start_step = ckpt_step + 1
     start_epoch = int(ckpt["epoch"]) + 1
 
     # -------------------------
@@ -420,7 +517,7 @@ def main():
         device=device,
         train_dir=train_dir,
         model_config=model_config,
-        log_config=output_config.logging,
+        log_config=logging_config,
         sample_config=output_config.sampling,
         ema_decay=output_config.train.ema_decay,
         is_main=is_main,

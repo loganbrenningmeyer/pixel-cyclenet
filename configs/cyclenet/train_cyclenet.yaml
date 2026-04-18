@@ -2,7 +2,7 @@
 # Run
 # =========================
 run:
-  name: "all_real_invar_grad_full"
+  name: "all_real_invar_grad_ramp"
   runs_dir: "/develop/code/runs/cyclenet/remote_sensing"
 
   # -- UNet Backbone ckpt
@@ -16,7 +16,7 @@ run:
 train:
   steps: 50000
   batch_size: 16
-  lr: 1e-5
+  lr: 5e-6
   weight_decay: 1e-4
   ema_decay: 0.9999
 

@@ -43,7 +43,7 @@ class CycleNetTrainer:
         self.scaler = scaler
         self.dataloader = dataloader
         self.sample_loader = sample_loader
-        self.sample_iter = iter(sample_loader) if sample_loader is not None else None
+        self.sample_iter = None
         self.device = device
         self.model_config = model_config
         self.log_config = log_config
@@ -59,13 +59,17 @@ class CycleNetTrainer:
         self.consis_weight = model_config.consis_weight
         self.invar_weight = model_config.invar_weight
         self.invar_weight_start = float(
-            OmegaConf.select(model_config, "invar_weight_start", self.invar_weight)
+            OmegaConf.select(model_config, "invar_weight_start", default=self.invar_weight)
         )
         self.invar_weight_ramp_steps = int(
-            OmegaConf.select(model_config, "invar_weight_ramp_steps", 0)
+            OmegaConf.select(model_config, "invar_weight_ramp_steps", default=0)
         )
 
         # -- Track running averages of losses
+        self._raw_recon_hist = deque(maxlen=100)
+        self._raw_cycle_hist = deque(maxlen=100)
+        self._raw_consis_hist = deque(maxlen=100)
+        self._raw_invar_hist = deque(maxlen=100)
         self._recon_hist = deque(maxlen=100)
         self._cycle_hist = deque(maxlen=100)
         self._consis_hist = deque(maxlen=100)
@@ -88,6 +92,8 @@ class CycleNetTrainer:
         self.model.train()
         if self.ema_model is not None:
             self.ema_model.eval()
+        if self.sample_loader is not None:
+            self.sample_iter = iter(self.sample_loader)
 
     def train(self, steps: int):
         """
@@ -247,6 +253,10 @@ class CycleNetTrainer:
             return
 
         invar_weight = self.current_invar_weight(step)
+        self.writer.add_scalar("train/batch_loss_unweighted/recon", loss_dict["recon"].item(), step)
+        self.writer.add_scalar("train/batch_loss_unweighted/cycle", loss_dict["cycle"].item(), step)
+        self.writer.add_scalar("train/batch_loss_unweighted/consis", loss_dict["consis"].item(), step)
+        self.writer.add_scalar("train/batch_loss_unweighted/invar", loss_dict["invar"].item(), step)
         self.writer.add_scalar(f"{label}/recon", self.recon_weight * loss_dict["recon"].item(), step)
         self.writer.add_scalar(f"{label}/cycle", self.cycle_weight * loss_dict["cycle"].item(), step)
         self.writer.add_scalar(f"{label}/consis", self.consis_weight * loss_dict["consis"].item(), step)
@@ -389,11 +399,15 @@ class CycleNetTrainer:
         except StopIteration:
             self.sample_iter = iter(self.sample_loader)
             x_src = next(self.sample_iter)
-            
+
         return x_src.to(self.device, non_blocking=True)
 
     def update_running_losses(self, loss_dict: dict[str, torch.Tensor], loss: torch.Tensor, step: int):
         invar_weight = self.current_invar_weight(step)
+        self._raw_recon_hist.append(loss_dict["recon"].item())
+        self._raw_cycle_hist.append(loss_dict["cycle"].item())
+        self._raw_consis_hist.append(loss_dict["consis"].item())
+        self._raw_invar_hist.append(loss_dict["invar"].item())
         self._recon_hist.append(self.recon_weight * loss_dict["recon"].item())
         self._cycle_hist.append(self.cycle_weight * loss_dict["cycle"].item())
         self._consis_hist.append(self.consis_weight * loss_dict["consis"].item())
@@ -401,6 +415,10 @@ class CycleNetTrainer:
         self._total_hist.append(loss.item())
 
     def log_running_losses(self, step: int):
+        self.writer.add_scalar("train/running_loss_unweighted/recon", sum(self._raw_recon_hist) / len(self._raw_recon_hist), step)
+        self.writer.add_scalar("train/running_loss_unweighted/cycle", sum(self._raw_cycle_hist) / len(self._raw_cycle_hist), step)
+        self.writer.add_scalar("train/running_loss_unweighted/consis", sum(self._raw_consis_hist) / len(self._raw_consis_hist), step)
+        self.writer.add_scalar("train/running_loss_unweighted/invar", sum(self._raw_invar_hist) / len(self._raw_invar_hist), step)
         self.writer.add_scalar("train/running_loss/recon", sum(self._recon_hist) / len(self._recon_hist), step)
         self.writer.add_scalar("train/running_loss/cycle", sum(self._cycle_hist) / len(self._cycle_hist), step)
         self.writer.add_scalar("train/running_loss/consis", sum(self._consis_hist) / len(self._consis_hist), step)

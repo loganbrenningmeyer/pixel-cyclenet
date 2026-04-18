@@ -70,15 +70,3 @@ class FIDComputer:
 
         return float(self.fid.compute())
 
-
-def main():
-    real_dir = ""
-    fake_dir = ""
-
-    fid_score = compute_fid(real_dir, fake_dir)
-
-    print("FID:", fid_score)
-
-
-if __name__ == "__main__":
-    main()

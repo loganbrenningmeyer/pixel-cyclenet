@@ -169,6 +169,12 @@ for the default remote-sensing setup.
 - Reference manifests can be reused across reruns to keep comparisons stable.
 - `analyze_translate_sweep.py` converts metrics into normalized realism and
   preservation scores and ranks candidates.
+- `analyze_translate_sweep.py` also supports sweep-level embedding projection
+  plots using the DeepLab/CLIP/Inception settings from
+  `configs/cyclenet/eval/project_translated.yaml`. The intended workflow is to
+  fit PCA/UMAP once on a fixed sampled sim+real reference set, then transform
+  translated candidate embeddings into that same space so movement across
+  checkpoints/CFG/strength can be compared directly.
 - `analyze_translate_sweep_consensus.py` summarizes best settings across
   multiple sweep directories.
 - `project_translate_sweep_projections.py` adds PCA/t-SNE diagnostics.
@@ -205,6 +211,13 @@ for the default remote-sensing setup.
   `configs/cyclenet/resume_cyclenet.yaml` and `src/cyclenet/resume_cyclenet.py`
   for loss weights and `invar_unet_grad`, so 20k->30k fine-tunes can change
   optimization behavior without editing the original run config.
+- 2026-04-18: Allow `resume_cyclenet.py` to override `train.lr` at resume time.
+  If only the learning rate changes, the resume path still restores optimizer
+  state and then rewrites each param group's LR to the requested override.
+- 2026-04-18: Allow `resume_cyclenet.py` to override logging intervals at
+  resume time (`loss_interval`, `ckpt_interval`, `sample_interval`). Logging
+  overrides can be applied in-place on an existing run, or saved into a new
+  branch config if `run.out_run_dir` is provided.
 
 ## Non-obvious implementation details worth remembering
 
@@ -212,6 +225,10 @@ for the default remote-sensing setup.
   `torch.no_grad()`. The trainable backbone portion is decoder + final layer.
 - The `no_unet_grad=True` path temporarily disables gradients on the decoder and
   final layer during forward passes used by some CycleNet losses.
+- Training sample visualization now uses random source-sample batches again
+  (`shuffle=True`) in the training and resume paths. The old checkpoint
+  `sample_batch_idx` bookkeeping was removed, so sample preview streams no
+  longer resume from the same exact source batch order across restarts.
 - With `invar_unet_grad=false`, the invariance loss behaves more like a
   frozen-teacher objective for the shared decoder/final layer. With
   `invar_unet_grad=true`, the invariance branch directly updates that trainable

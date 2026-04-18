@@ -1,0 +1,73 @@
+# =========================
+# Run
+# =========================
+run:
+  run_dir: /develop/code/runs/cyclenet/remote_sensing/all_real_ft_invar
+  ckpt_name: step-40000.ckpt
+
+  seed: 42
+
+# =========================
+# Dataset
+# =========================
+data:
+  translated_dir: /develop/data/remote_sensing/tiled/sim_subset/
+  real_dir: /develop/data/remote_sensing/tiled/real_subset/oem_test
+  sim_dir: /develop/data/remote_sensing/tiled/sim_subset/sim_test
+
+  out_dir: /develop/code/eval/cyclenet/remote_sensing/project_translated
+  image_size: 256
+
+# =========================
+# Embedding
+# =========================
+embedding:
+  # -- clip, inception, or deeplab
+  model: deeplab
+  model_path: /cgi/data/nvesd/workspaces/logan/code/land_mapping/runs/deeplab/oem_subset/real-sim/training/checkpoints/50000.ckpt
+  feature_layer: prelogits
+  num_classes: 8
+  batch_size: 64
+  num_samples: 1000
+
+# =========================
+# Projection
+# =========================
+projection:
+  # -- pca, or umap
+  method: umap
+  n_components: 2
+  random_state: 42
+
+# =========================
+# Plotting
+# =========================
+plotting:
+  title: 2D Embedding Projection
+
+  points:
+    show: true
+    alpha: 0.1
+    max_points_per_group: 2000
+    size: 10
+
+  density:
+    show: true
+    alpha: 0.35
+    fill: false
+
+  marginal:
+    show: true
+
+  labels:
+    sim: Sim
+    real: Real
+    translated: translated
+
+  colors:
+    sim: "#6b7280"
+    real: "#dc2626"
+    translated: "#2563eb"
+
+
+

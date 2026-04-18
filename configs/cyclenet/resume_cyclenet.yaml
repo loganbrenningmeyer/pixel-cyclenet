@@ -2,20 +2,31 @@
 # Run
 # =========================
 run:
-  run_dir: /develop/code/runs/cyclenet/remote_sensing/all_real
-  ckpt_name: step-20000.ckpt
+  run_dir: /develop/code/runs/cyclenet/remote_sensing/all_real_ft_invar_and_consis
+  ckpt_name: step-27500.ckpt
   # -- Optional if changing loss weights on resume
-  out_run_dir: /develop/code/runs/cyclenet/remote_sensing/all_real_ft_invar
+  out_run_dir: /develop/code/runs/cyclenet/remote_sensing/all_real_ft_invar_and_consis_ft_low_grad
 
 # =========================
 # Training
 # =========================
 train:
-  total_steps: 30000
+  total_steps: 32500
+  lr: 1e-6
 
 # =========================
 # Model (optional resume-time overrides)
+# -- Loss weights (recon_weight, cycle_weight, consis_weight, invar_weight)
+# -- invar_unet_grad (bool): Enable/disable gradients in forward pass for invar loss
 # =========================
 model:
-  invar_weight: 0.2
-  # invar_unet_grad: true
+  recon_weight: 0.5
+  cycle_weight: 0.01
+  consis_weight: 0.05
+  invar_weight: 0.05
+
+  invar_unet_grad: true
+
+logging:
+  ckpt_interval: 500
+  sample_interval: 500

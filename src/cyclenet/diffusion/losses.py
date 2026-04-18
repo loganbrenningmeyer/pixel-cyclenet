@@ -164,13 +164,14 @@ def cyclenet_loss(
     else:
         eps_xt_x2y_x0_invar = eps_xt_x2y_x0
 
-    eps_xt_y2y_y0 = model.forward(
-        x_t=x_t,
-        t=t,
-        from_idx=tgt_idx,
-        to_idx=tgt_idx,
-        c_img=y_0_cond,
-    )
+    with torch.no_grad():
+        eps_xt_y2y_y0 = model.forward(
+            x_t=x_t,
+            t=t,
+            from_idx=tgt_idx,
+            to_idx=tgt_idx,
+            c_img=y_0_cond,
+        )
 
     invar_loss = F.mse_loss(eps_xt_x2y_x0_invar, eps_xt_y2y_y0.detach())
 
@@ -325,13 +326,14 @@ def cyclenet_loss_seg(
     else:
         eps_xt_x2y_x0_invar = eps_xt_x2y_x0
 
-    eps_xt_y2y_y0 = model.forward(
-        x_t=x_t,
-        t=t,
-        from_idx=tgt_idx,
-        to_idx=tgt_idx,
-        c_img=c_y0_seg,
-    )
+    with torch.no_grad():
+        eps_xt_y2y_y0 = model.forward(
+            x_t=x_t,
+            t=t,
+            from_idx=tgt_idx,
+            to_idx=tgt_idx,
+            c_img=c_y0_seg,
+        )
 
     invar_loss = F.mse_loss(eps_xt_x2y_x0_invar, eps_xt_y2y_y0.detach())
 
@@ -341,11 +343,3 @@ def cyclenet_loss_seg(
         "consis": consis_loss,
         "invar": invar_loss,
     }
-
-
-
-def unwrap(m):
-    """
-    Unwrap DDP module if it is wrapped
-    """
-    return m.module if hasattr(m, "module") else m

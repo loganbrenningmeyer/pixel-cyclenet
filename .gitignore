@@ -5,8 +5,8 @@ runs/
 wandb/
 .DS_Store
 Icon?
-data/fashion/
-data/mnist/
+data/fashion/*
+data/mnist/*
 torch_datasets/
 .codex
 utils/
