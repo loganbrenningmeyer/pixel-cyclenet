@@ -1,5 +1,5 @@
 import torch
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 from pathlib import Path
 from torch.utils.data import DataLoader
 from torch.optim import Optimizer
@@ -58,6 +58,12 @@ class CycleNetTrainerSeg:
         self.cycle_weight = model_config.cycle_weight
         self.consis_weight = model_config.consis_weight
         self.invar_weight = model_config.invar_weight
+        self.invar_weight_start = float(
+            OmegaConf.select(model_config, "invar_weight_start", self.invar_weight)
+        )
+        self.invar_weight_ramp_steps = int(
+            OmegaConf.select(model_config, "invar_weight_ramp_steps", 0)
+        )
 
         # -- Track running averages of losses
         self._recon_hist = deque(maxlen=100)
@@ -117,14 +123,14 @@ class CycleNetTrainerSeg:
                 src_idx = src_idx.to(self.device)
                 tgt_idx = tgt_idx.to(self.device)
 
-                loss_dict, loss = self.train_step(x_0, seg_0, src_idx, tgt_idx)
+                loss_dict, loss = self.train_step(x_0, seg_0, src_idx, tgt_idx, step)
 
                 # -------------------------
                 # Log loss / save checkpoint / generate samples
                 # -------------------------
                 if self.is_main:
                     # -- Track running averages of weighted individual losses & total loss
-                    self.update_running_losses(loss_dict, loss)
+                    self.update_running_losses(loss_dict, loss, step)
 
                     if step % self.log_config.loss_interval == 0:
                         self.log_loss("train/batch_loss", loss_dict, loss, step)
@@ -160,12 +166,14 @@ class CycleNetTrainerSeg:
         x_0: torch.Tensor, 
         seg_0: torch.Tensor,
         src_idx: torch.Tensor, 
-        tgt_idx: torch.Tensor
+        tgt_idx: torch.Tensor,
+        step: int,
     ) -> tuple[dict[str, torch.Tensor], torch.Tensor]:
         """
         
         """
         self.optimizer.zero_grad()
+        invar_weight = self.current_invar_weight(step)
 
         with autocast(device_type="cuda"):
             # -------------------------
@@ -192,7 +200,7 @@ class CycleNetTrainerSeg:
                 self.recon_weight * loss_dict["recon"]
                 + self.cycle_weight * loss_dict["cycle"]
                 + self.consis_weight * loss_dict["consis"]
-                + self.invar_weight * loss_dict["invar"]
+                + invar_weight * loss_dict["invar"]
             )
 
         # -------------------------
@@ -219,6 +227,13 @@ class CycleNetTrainerSeg:
 
         return loss_dict, loss
 
+    def current_invar_weight(self, step: int) -> float:
+        if self.invar_weight_ramp_steps <= 0:
+            return self.invar_weight
+
+        progress = min(max((step - 1) / self.invar_weight_ramp_steps, 0.0), 1.0)
+        return self.invar_weight_start + progress * (self.invar_weight - self.invar_weight_start)
+
     @torch.no_grad()
     def update_ema(self):
         """
@@ -236,12 +251,14 @@ class CycleNetTrainerSeg:
         """
         if not self.is_main or self.writer is None:
             return
-        
+
+        invar_weight = self.current_invar_weight(step)
         self.writer.add_scalar(f"{label}/recon", self.recon_weight * loss_dict["recon"].item(), step)
         self.writer.add_scalar(f"{label}/cycle", self.cycle_weight * loss_dict["cycle"].item(), step)
         self.writer.add_scalar(f"{label}/consis", self.consis_weight * loss_dict["consis"].item(), step)
-        self.writer.add_scalar(f"{label}/invar", self.invar_weight * loss_dict["invar"].item(), step)  
-        self.writer.add_scalar(f"{label}/total", loss.item(), step)   
+        self.writer.add_scalar(f"{label}/invar", invar_weight * loss_dict["invar"].item(), step)
+        self.writer.add_scalar(f"{label}/total", loss.item(), step)
+        self.writer.add_scalar("train/invar_weight", invar_weight, step)
 
     def save_checkpoint(self, step: int, epoch: int):
         """
@@ -385,11 +402,12 @@ class CycleNetTrainerSeg:
             seg_src.to(self.device, non_blocking=True),
         )
 
-    def update_running_losses(self, loss_dict: dict[str, torch.Tensor], loss: torch.Tensor):
+    def update_running_losses(self, loss_dict: dict[str, torch.Tensor], loss: torch.Tensor, step: int):
+        invar_weight = self.current_invar_weight(step)
         self._recon_hist.append(self.recon_weight * loss_dict["recon"].item())
         self._cycle_hist.append(self.cycle_weight * loss_dict["cycle"].item())
         self._consis_hist.append(self.consis_weight * loss_dict["consis"].item())
-        self._invar_hist.append(self.invar_weight * loss_dict["invar"].item())
+        self._invar_hist.append(invar_weight * loss_dict["invar"].item())
         self._total_hist.append(loss.item())
 
     def log_running_losses(self, step: int):

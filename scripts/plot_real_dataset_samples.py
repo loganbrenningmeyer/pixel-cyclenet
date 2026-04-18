@@ -52,6 +52,12 @@ def parse_args() -> argparse.Namespace:
         help="Root directory whose immediate subdirectories are treated as datasets.",
     )
     parser.add_argument(
+        "--parent-dir",
+        type=str,
+        default="opt",
+        help="Parent dir of image files to collect.",
+    )
+    parser.add_argument(
         "--out-dir",
         type=Path,
         default=Path("artifacts/real_dataset_sample_grids"),
@@ -99,8 +105,12 @@ def discover_datasets(root: Path) -> list[Path]:
     return datasets
 
 
-def collect_images(dataset_dir: Path) -> list[Path]:
-    return [path for path in sorted(dataset_dir.rglob("*")) if is_image_file(path)]
+def collect_images(dataset_dir: Path, parent_dir: str) -> list[Path]:
+    return [
+        path
+        for path in sorted(dataset_dir.rglob("*"))
+        if is_image_file(path) and path.parent.name == parent_dir
+    ]
 
 
 def load_rgb(path: Path):
@@ -204,7 +214,7 @@ def main() -> None:
     skipped = 0
 
     for dataset_index, dataset_dir in enumerate(dataset_dirs):
-        all_images = collect_images(dataset_dir)
+        all_images = collect_images(dataset_dir, args.parent_dir)
         if not all_images:
             skipped += 1
             print(f"[skip] {dataset_dir.name}: no image files found")

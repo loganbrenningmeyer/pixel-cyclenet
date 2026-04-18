@@ -28,6 +28,8 @@ model:
   cycle_weight: 0.01
   consis_weight: 0.1
   invar_weight: 0.1
+  invar_weight_start: 0.0
+  invar_weight_ramp_steps: 15000
 
   invar_unet_grad: true
 

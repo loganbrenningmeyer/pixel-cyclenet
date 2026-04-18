@@ -192,6 +192,19 @@ for the default remote-sensing setup.
   selection mechanism. Do not rely on single-checkpoint visual inspection.
 - 2026-04-17: Balance real and sim batches explicitly with `DomainSampler`,
   accepting that each epoch is capped by the smaller domain.
+- 2026-04-17: Treat `invar_unet_grad` as an explicit experiment knob rather
+  than a fixed behavior. Both RGB and segmentation CycleNet training paths now
+  support enabling or disabling UNet decoder/final-layer gradients for the
+  invariance `x->y` pass from config.
+- 2026-04-17: Add optional invariance-weight ramping for fresh runs via
+  `model.invar_weight_start` and `model.invar_weight_ramp_steps`. Current
+  recommended starting point for `invar_unet_grad=true` is ramping from `0.0`
+  to `0.1` over about `15k` steps instead of turning full invariance pressure
+  on immediately.
+- 2026-04-17: Allow resume-time model overrides through
+  `configs/cyclenet/resume_cyclenet.yaml` and `src/cyclenet/resume_cyclenet.py`
+  for loss weights and `invar_unet_grad`, so 20k->30k fine-tunes can change
+  optimization behavior without editing the original run config.
 
 ## Non-obvious implementation details worth remembering
 
@@ -199,6 +212,10 @@ for the default remote-sensing setup.
   `torch.no_grad()`. The trainable backbone portion is decoder + final layer.
 - The `no_unet_grad=True` path temporarily disables gradients on the decoder and
   final layer during forward passes used by some CycleNet losses.
+- With `invar_unet_grad=false`, the invariance loss behaves more like a
+  frozen-teacher objective for the shared decoder/final layer. With
+  `invar_unet_grad=true`, the invariance branch directly updates that trainable
+  target-side path, which materially changes optimization behavior.
 - In CycleNet losses, the repo follows the official implementation behavior,
   which differs from the paper in some conditioning details. The notes in
   `info/cyclenet_info.md` and `info/loss_grads.md` are the source of truth for
@@ -207,6 +224,11 @@ for the default remote-sensing setup.
   training code.
 - Evaluation scripts expect local model assets for CLIP and Inception in the
   configured cache paths; they are not written as online-download-first tools.
+- In DDIM translation, larger `noise_strength` both starts from a noisier point
+  and uses more reverse denoising steps in this repo's implementation because
+  strength selects the truncated starting index from the uniformly spaced DDIM
+  schedule. Higher CFG still pushes harder toward the real-domain branch, but
+  artifact severity is not strictly monotonic in `cfg * strength`.
 
 # Constraints and conventions
 
@@ -238,6 +260,16 @@ for the default remote-sensing setup.
   scores, especially at the smaller default sample counts.
 - Preservation can still regress even when realism metrics improve, so overlay
   checks and LPIPS should remain part of candidate selection.
+- Invariance loss has repeatedly shown a tendency to fall early and then rise
+  later in training, including runs resumed from `20k` with larger invariance
+  weight. This suggests the issue is not solved by weight increases alone and
+  may reflect a deeper optimization conflict with reconstruction-dominated
+  training.
+- Early fresh runs with `invar_unet_grad=true` can develop black-dot / blob
+  artifacts surprisingly early. In recent observations, these became noticeable
+  by roughly `7.5k` steps at moderate settings and were clearly present by
+  `10k` even at low `noise_strength` / modest CFG, so full-strength invariance
+  gradients from step 1 are risky.
 - There is ongoing local work in eval/translation files in the git worktree.
   Future edits should inspect current uncommitted changes before touching those
   areas.
@@ -256,3 +288,11 @@ for the default remote-sensing setup.
 - Before changing CycleNet losses or gradient flow, re-read
   `info/cyclenet_info.md` and `info/loss_grads.md`; those notes capture the
   current intended implementation behavior better than the original paper.
+- For fresh `invar_unet_grad=true` experiments, prefer a conservative starting
+  recipe before broader sweeps: `lr=5e-6`, `recon=1.0`, `cycle=0.01`,
+  `consis=0.1`, `invar=0.1`, `invar_weight_start=0.0`,
+  `invar_weight_ramp_steps=15000`.
+- When comparing grad/no-grad invariance experiments, monitor fixed sample
+  settings early in training. Moderate settings such as around
+  `strength=0.3, cfg=2..3` and low-noise settings such as `strength=0.1, cfg=2`
+  have been useful early-warning probes for dot/blob failure modes.
