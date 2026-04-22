@@ -2,33 +2,51 @@
 # Run
 # =========================
 run:
-  run_dir: /develop/code/runs/cyclenet/remote_sensing/all_real_ft_invar
-  ckpt_name: step-40000.ckpt
-
   seed: 42
 
 # =========================
 # Dataset
 # =========================
 data:
-  translated_dir: /develop/data/remote_sensing/tiled/sim_subset/
-  real_dir: /develop/data/remote_sensing/tiled/real_subset/oem_test
-  sim_dir: /develop/data/remote_sensing/tiled/sim_subset/sim_test
+  # translated_dir: /develop/data/remote_sensing/tiled/projection/cyclenet_sim_proj/all_real/step-20000_strength-0.4_cfg-2.0
+  real_dir: /develop/data/remote_sensing/tiled/projection/oem_proj
+  sim_dir: /develop/data/remote_sensing/tiled/projection/sim_proj
 
-  out_dir: /develop/code/eval/cyclenet/remote_sensing/project_translated
+  # out_dir: /develop/code/eval/cyclenet/remote_sensing/project_translated/all_real/step-20000_strength-0.4_cfg-2.0
+  translated_dir_template: /develop/data/remote_sensing/tiled/projection/cyclenet_sim_proj/oem_only/ema/step-{step}/strength-{strength}/cfg-{cfg}
+  out_dir_template: /develop/code/eval/cyclenet/remote_sensing/project_translated/oem_only/ema/step-{step}/strength-{strength}/cfg-{cfg}
+
+  reference_cache_dir: /develop/code/eval/cyclenet/remote_sensing/project_translated/reference_cache
+
   image_size: 256
+
+# =========================
+# Sweep
+# =========================
+# If sweep is set, the script loops over every (step, strength, cfg) combination.
+# data.translated_dir_template is required in sweep mode.
+# If data.out_dir_template is omitted, outputs are written under data.out_dir / step-..._strength-..._cfg-...
+#
+sweep:
+  embedding_models: [clip, inception, deeplab]
+  projection_methods: [umap, pca]
+  steps: [2500]
+  cfg_weights: [1.0, 2.0, 3.0, 4.0, 5.0]
+  noise_strengths: [0.1, 0.2, 0.3, 0.4, 0.5]
 
 # =========================
 # Embedding
 # =========================
 embedding:
   # -- clip, inception, or deeplab
-  model: deeplab
-  model_path: /cgi/data/nvesd/workspaces/logan/code/land_mapping/runs/deeplab/oem_subset/real-sim/training/checkpoints/50000.ckpt
+  model: inception
+
+  clip_path: /cgi/data/nvesd/workspaces/logan/data/pre_trained_models/clip
+  deeplab_path: /cgi/data/nvesd/workspaces/logan/code/land_mapping/runs/deeplab/oem_subset/real-sim/training/checkpoints/step-50000.ckpt
+  
   feature_layer: prelogits
-  num_classes: 8
-  batch_size: 64
-  num_samples: 1000
+  batch_size: 32
+  num_samples: 2000
 
 # =========================
 # Projection
@@ -44,16 +62,17 @@ projection:
 # =========================
 plotting:
   title: 2D Embedding Projection
+  axis_pad_frac: 0.25
 
   points:
     show: true
-    alpha: 0.1
-    max_points_per_group: 2000
+    alpha: 0.3
+    max_points_per_group: 500
     size: 10
 
   density:
     show: true
-    alpha: 0.35
+    alpha: 0.7
     fill: false
 
   marginal:
@@ -62,12 +81,9 @@ plotting:
   labels:
     sim: Sim
     real: Real
-    translated: translated
+    translated: Translated
 
   colors:
-    sim: "#6b7280"
-    real: "#dc2626"
-    translated: "#2563eb"
-
-
-
+    sim: "#55A868"       
+    real: "#C44E52"      
+    translated: "#4C72B0"

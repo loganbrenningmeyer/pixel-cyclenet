@@ -1,5 +1,6 @@
 import argparse
 import csv
+import fcntl
 import html
 import json
 import math
@@ -63,6 +64,10 @@ def load_config(config_path: str | Path) -> DictConfig:
     return OmegaConf.load(config_path)
 
 
+def save_config(config: DictConfig, save_path: str | Path):
+    OmegaConf.save(config, save_path)
+
+
 def cfg_select(config: DictConfig, key: str, default: Any = None) -> Any:
     value = OmegaConf.select(config, key)
     return default if value is None else value
@@ -88,6 +93,14 @@ def checkpoint_name(value: int | str) -> str:
     if value.isdigit():
         return f"step-{value}.ckpt"
     return value
+
+
+def combo_name(checkpoint: str, noise_strength: float, cfg_weight: float) -> str:
+    return (
+        f"{Path(checkpoint).stem}"
+        f"_strength-{noise_strength:.2f}"
+        f"_cfg-{cfg_weight:.1f}"
+    )
 
 
 def required_sweep_values(config: DictConfig, key: str) -> list[Any]:
@@ -242,6 +255,13 @@ def write_manifest(rows: list[dict[str, Any]], out_path: Path):
 
 
 def read_manifest(path: Path) -> list[dict[str, str]]:
+    with path.open("r", newline="") as f:
+        return list(csv.DictReader(f))
+
+
+def read_metrics(path: Path) -> list[dict[str, str]]:
+    if not path.exists():
+        return []
     with path.open("r", newline="") as f:
         return list(csv.DictReader(f))
 
@@ -768,15 +788,94 @@ def write_clip_umap(
 def write_metrics(metrics_rows: list[dict[str, Any]], out_dir: Path):
     csv_path = out_dir / "metrics.csv"
     json_path = out_dir / "metrics.json"
+    tmp_csv_path = out_dir / f".metrics.{os.getpid()}.csv.tmp"
+    tmp_json_path = out_dir / f".metrics.{os.getpid()}.json.tmp"
 
     fieldnames = sorted({key for row in metrics_rows for key in row.keys()})
-    with csv_path.open("w", newline="") as f:
+    with tmp_csv_path.open("w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(metrics_rows)
 
-    with json_path.open("w") as f:
+    with tmp_json_path.open("w") as f:
         json.dump(metrics_rows, f, indent=2)
+
+    os.replace(tmp_csv_path, csv_path)
+    os.replace(tmp_json_path, json_path)
+
+
+def metric_key_value(value: Any) -> str:
+    if value is None:
+        return ""
+
+    if isinstance(value, (int, float)):
+        if isinstance(value, float) and math.isnan(value):
+            return "nan"
+        return f"{float(value):.12g}"
+
+    text = str(value).strip()
+    if not text:
+        return ""
+
+    try:
+        return f"{float(text):.12g}"
+    except ValueError:
+        return text
+
+
+def metric_row_key(row: dict[str, Any]) -> tuple[str, str, str, str, str]:
+    return (
+        str(row.get("kind", "")),
+        str(row.get("comparison", "")),
+        str(row.get("checkpoint", "")),
+        metric_key_value(row.get("cfg_weight", "")),
+        metric_key_value(row.get("noise_strength", "")),
+    )
+
+
+def candidate_metric_key(
+    checkpoint: str,
+    cfg_weight: float,
+    noise_strength: float,
+) -> tuple[str, str, str, str, str]:
+    return (
+        "translated_candidate",
+        "translated_sim_vs_real",
+        checkpoint,
+        metric_key_value(cfg_weight),
+        metric_key_value(noise_strength),
+    )
+
+
+def candidate_outputs_complete(fake_dir: Path, expected_count: int) -> bool:
+    if not fake_dir.exists():
+        return False
+    return len(gather_image_paths(fake_dir)) == expected_count
+
+
+def merge_metric_row(row: dict[str, Any], out_dir: Path):
+    lock_path = out_dir / ".metrics.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+
+    with lock_path.open("a+") as lock_file:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        try:
+            metrics_rows = read_metrics(out_dir / "metrics.csv")
+            row_key = metric_row_key(row)
+            replaced = False
+
+            for idx, existing in enumerate(metrics_rows):
+                if metric_row_key(existing) == row_key:
+                    metrics_rows[idx] = row
+                    replaced = True
+                    break
+
+            if not replaced:
+                metrics_rows.append(row)
+
+            write_metrics(metrics_rows, out_dir)
+        finally:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
 
 
 def append_metric_error(row: dict[str, Any], name: str, exc: Exception):
@@ -952,6 +1051,15 @@ def main():
     args = parser.parse_args()
 
     config = load_config(args.config)
+    num_shards = int(cfg_select(config, "data.num_shards", 1))
+    shard_index = int(cfg_select(config, "data.shard_index", 0))
+    if num_shards < 1:
+        raise ValueError(f"data.num_shards must be >= 1, got {num_shards}.")
+    if shard_index < 0 or shard_index >= num_shards:
+        raise ValueError(
+            f"data.shard_index must be in [0, {num_shards - 1}], got {shard_index}."
+        )
+
     is_ddp, rank, local_rank, world_size = ddp_setup()
     is_main = rank == 0
 
@@ -974,7 +1082,10 @@ def main():
     eval_out_dir = Path(config.eval.out_dir)
     if is_main:
         eval_out_dir.mkdir(parents=True, exist_ok=True)
-        OmegaConf.save(config, eval_out_dir / "config.yaml")
+        config_name = "config.yaml"
+        if num_shards > 1:
+            config_name = f"config.shard-{shard_index}-of-{num_shards}.yaml"
+        save_config(config, eval_out_dir / config_name)
     barrier(is_ddp)
 
     src_root = Path(config.data.src_dir)
@@ -1056,8 +1167,6 @@ def main():
     if isinstance(metric_values, str):
         metric_values = [metric_values]
     metrics = {str(m).lower() for m in metric_values}
-    metrics_rows: list[dict[str, Any]] = []
-
     fid_computer = None
     fid_init_error = None
     if is_main and "fid" in metrics:
@@ -1132,8 +1241,7 @@ def main():
         )
         if "clip" in metrics and clip_init_error is not None:
             append_metric_error(baseline, "clip", clip_init_error)
-        metrics_rows.append(baseline)
-        write_metrics(metrics_rows, eval_out_dir)
+        merge_metric_row(baseline, eval_out_dir)
 
     rank_source_indices = source_indices[rank::world_size]
     source_subset = Subset(source_dataset, rank_source_indices)
@@ -1158,10 +1266,24 @@ def main():
     noise_strengths = [float(v) for v in required_sweep_values(config, "sweep.noise_strengths")]
     ignore_pairs = parse_ignore_pairs(config)
     model_key = str(cfg_select(config, "eval.model_key", "ema_model"))
+    combo_specs = [
+        (ckpt_name, noise_strength, cfg_weight)
+        for ckpt_name in checkpoints
+        for noise_strength in noise_strengths
+        for cfg_weight in cfg_weights
+        if (noise_strength, cfg_weight) not in ignore_pairs
+    ]
+    shard_combo_specs = combo_specs[shard_index::num_shards]
 
     if is_main and ignore_pairs:
         ignored = ", ".join(f"(strength={s:g}, cfg={w:g})" for s, w in sorted(ignore_pairs))
         print(f"Skipping configured sweep pairs: {ignored}")
+
+    if is_main and num_shards > 1:
+        print(
+            f"Shard {shard_index + 1}/{num_shards}: "
+            f"{len(shard_combo_specs)} of {len(combo_specs)} candidate combinations selected."
+        )
 
     sampler = str(config.sampling.sampler)
     ddim_steps = int(config.sampling.ddim_steps)
@@ -1169,131 +1291,148 @@ def main():
     src_domain_idx = int(config.data.src_idx)
     translation_seed = int(cfg_select(config, "eval.translation_seed", seed))
 
-    for ckpt_name in checkpoints:
+    loaded_ckpt_name = None
+    for ckpt_name, noise_strength, cfg_weight in shard_combo_specs:
         ckpt_path = run_dir / "training" / "checkpoints" / ckpt_name
+        if loaded_ckpt_name != ckpt_name:
+            if is_main:
+                print(f"Loading {ckpt_path}")
+            load_checkpoint(model, ckpt_path, model_key)
+            model.eval()
+            loaded_ckpt_name = ckpt_name
+
+        torch.manual_seed(translation_seed)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed_all(translation_seed)
+
+        current_combo_name = combo_name(
+            checkpoint=ckpt_name,
+            noise_strength=noise_strength,
+            cfg_weight=cfg_weight,
+        )
+        combo_dir = eval_out_dir / "candidates" / current_combo_name
+        fake_dir = combo_dir / "fake"
+
+        should_run = True
         if is_main:
-            print(f"Loading {ckpt_path}")
-        load_checkpoint(model, ckpt_path, model_key)
-        model.eval()
+            existing_metrics = {
+                metric_row_key(row)
+                for row in read_metrics(eval_out_dir / "metrics.csv")
+            }
+            combo_key = candidate_metric_key(ckpt_name, cfg_weight, noise_strength)
+            has_complete_outputs = candidate_outputs_complete(fake_dir, len(source_ref_paths))
 
-        for noise_strength in noise_strengths:
-            for cfg_weight in cfg_weights:
-                if (noise_strength, cfg_weight) in ignore_pairs:
-                    continue
+            should_run = combo_key not in existing_metrics or not has_complete_outputs
+            if not should_run:
+                print(f"Skipping existing candidate {current_combo_name}")
+            else:
+                reset_dir(fake_dir)
 
-                torch.manual_seed(translation_seed)
-                if torch.cuda.is_available():
-                    torch.cuda.manual_seed_all(translation_seed)
+        if is_ddp:
+            flag = torch.tensor([1 if should_run else 0], device=device, dtype=torch.int32)
+            dist.broadcast(flag, src=0)
+            should_run = bool(flag.item())
+        if not should_run:
+            continue
 
-                combo_name = (
-                    f"{Path(ckpt_name).stem}"
-                    f"_strength-{noise_strength:.2f}"
-                    f"_cfg-{cfg_weight:.1f}"
-                )
-                combo_dir = eval_out_dir / "candidates" / combo_name
-                fake_dir = combo_dir / "fake"
+        barrier(is_ddp)
 
-                if is_main:
-                    reset_dir(fake_dir)
-                barrier(is_ddp)
+        row: dict[str, Any] = {
+            "kind": "translated_candidate",
+            "comparison": "translated_sim_vs_real",
+            "checkpoint": ckpt_name,
+            "cfg_weight": cfg_weight,
+            "noise_strength": noise_strength,
+            "num_real": len(real_ref_paths),
+            "out_dir": str(combo_dir),
+        }
 
-                row: dict[str, Any] = {
-                    "kind": "translated_candidate",
-                    "comparison": "translated_sim_vs_real",
-                    "checkpoint": ckpt_name,
-                    "cfg_weight": cfg_weight,
-                    "noise_strength": noise_strength,
-                    "num_real": len(real_ref_paths),
-                    "out_dir": str(combo_dir),
-                }
+        fake_paths, lpips_metrics = translate_candidate(
+            model=model,
+            dataloader=dataloader,
+            src_root=src_root,
+            out_dir=fake_dir,
+            device=device,
+            sched=sched,
+            src_domain_idx=src_domain_idx,
+            sampler=sampler,
+            cfg_weight=cfg_weight,
+            noise_strength=noise_strength,
+            ddim_steps=ddim_steps,
+            eta=eta,
+            lpips_batch_fn=lpips_batch_fn,
+            show_progress=is_main,
+        )
+        lpips_stats = reduce_lpips_stats(lpips_metrics, device, is_ddp)
+        barrier(is_ddp)
 
-                fake_paths, lpips_metrics = translate_candidate(
-                    model=model,
-                    dataloader=dataloader,
-                    src_root=src_root,
-                    out_dir=fake_dir,
-                    device=device,
-                    sched=sched,
-                    src_domain_idx=src_domain_idx,
-                    sampler=sampler,
-                    cfg_weight=cfg_weight,
-                    noise_strength=noise_strength,
-                    ddim_steps=ddim_steps,
-                    eta=eta,
-                    lpips_batch_fn=lpips_batch_fn,
-                    show_progress=is_main,
-                )
-                lpips_stats = reduce_lpips_stats(lpips_metrics, device, is_ddp)
-                barrier(is_ddp)
+        if is_main:
+            fake_paths = gather_image_paths(fake_dir)
+            row["num_fake"] = len(fake_paths)
+            row.update(lpips_metrics_from_stats(lpips_stats))
+            if "lpips" in metrics and lpips_import_error is not None:
+                row["source_lpips_mean"] = math.nan
+                append_metric_error(row, "lpips", lpips_import_error)
 
-                if is_main:
-                    fake_paths = gather_image_paths(fake_dir)
-                    row["num_fake"] = len(fake_paths)
-                    row.update(lpips_metrics_from_stats(lpips_stats))
-                    if "lpips" in metrics and lpips_import_error is not None:
-                        row["source_lpips_mean"] = math.nan
-                        append_metric_error(row, "lpips", lpips_import_error)
+            if "fid" in metrics and fid_computer is not None:
+                try:
+                    row["real_fid"] = fid_computer.compute(real_ref_dir, fake_dir)
+                except Exception as exc:
+                    row["real_fid"] = math.nan
+                    append_metric_error(row, "fid", exc)
+            elif "fid" in metrics and fid_init_error is not None:
+                row["real_fid"] = math.nan
+                append_metric_error(row, "fid", fid_init_error)
 
-                    if "fid" in metrics and fid_computer is not None:
-                        try:
-                            row["real_fid"] = fid_computer.compute(real_ref_dir, fake_dir)
-                        except Exception as exc:
-                            row["real_fid"] = math.nan
-                            append_metric_error(row, "fid", exc)
-                    elif "fid" in metrics and fid_init_error is not None:
-                        row["real_fid"] = math.nan
-                        append_metric_error(row, "fid", fid_init_error)
+            if "clip" in metrics and real_feats is not None and source_feats is not None and get_clip_embeddings_fn is not None:
+                try:
+                    fake_feats = get_clip_embeddings_fn(normalize_paths(fake_paths))
+                    row.update(compute_clip_metrics_from_feats(fake_feats, real_feats))
 
-                    if "clip" in metrics and real_feats is not None and source_feats is not None and get_clip_embeddings_fn is not None:
-                        try:
-                            fake_feats = get_clip_embeddings_fn(normalize_paths(fake_paths))
-                            row.update(compute_clip_metrics_from_feats(fake_feats, real_feats))
+                    if bool(cfg_select(config, "eval.plot_clip_pca", True)):
+                        row.update(write_clip_pca(
+                            source_feats=source_feats,
+                            fake_feats=fake_feats,
+                            real_feats=real_feats,
+                            source_paths=source_ref_paths,
+                            fake_paths=fake_paths,
+                            real_paths=real_ref_paths,
+                            out_dir=combo_dir,
+                        ))
 
-                            if bool(cfg_select(config, "eval.plot_clip_pca", True)):
-                                row.update(write_clip_pca(
-                                    source_feats=source_feats,
-                                    fake_feats=fake_feats,
-                                    real_feats=real_feats,
-                                    source_paths=source_ref_paths,
-                                    fake_paths=fake_paths,
-                                    real_paths=real_ref_paths,
-                                    out_dir=combo_dir,
-                                ))
+                    if bool(cfg_select(config, "eval.plot_clip_tsne", True)):
+                        tsne_state = int(cfg_select(config, "eval.tsne_random_state", seed))
+                        tsne_perplexity = float(cfg_select(config, "eval.tsne_perplexity", 30.0))
+                        row.update(write_clip_tsne(
+                            source_feats=source_feats,
+                            fake_feats=fake_feats,
+                            real_feats=real_feats,
+                            source_paths=source_ref_paths,
+                            fake_paths=fake_paths,
+                            real_paths=real_ref_paths,
+                            out_dir=combo_dir,
+                            random_state=tsne_state,
+                            perplexity=tsne_perplexity,
+                        ))
 
-                            if bool(cfg_select(config, "eval.plot_clip_tsne", True)):
-                                tsne_state = int(cfg_select(config, "eval.tsne_random_state", seed))
-                                tsne_perplexity = float(cfg_select(config, "eval.tsne_perplexity", 30.0))
-                                row.update(write_clip_tsne(
-                                    source_feats=source_feats,
-                                    fake_feats=fake_feats,
-                                    real_feats=real_feats,
-                                    source_paths=source_ref_paths,
-                                    fake_paths=fake_paths,
-                                    real_paths=real_ref_paths,
-                                    out_dir=combo_dir,
-                                    random_state=tsne_state,
-                                    perplexity=tsne_perplexity,
-                                ))
+                    if bool(cfg_select(config, "eval.plot_clip_umap", True)):
+                        umap_state = int(cfg_select(config, "eval.umap_random_state", seed))
+                        row.update(write_clip_umap(
+                            source_feats=source_feats,
+                            fake_feats=fake_feats,
+                            real_feats=real_feats,
+                            source_paths=source_ref_paths,
+                            fake_paths=fake_paths,
+                            real_paths=real_ref_paths,
+                            out_dir=combo_dir,
+                            random_state=umap_state,
+                        ))
+                except Exception as exc:
+                    append_metric_error(row, "clip", exc)
+            elif "clip" in metrics and clip_init_error is not None:
+                append_metric_error(row, "clip", clip_init_error)
 
-                            if bool(cfg_select(config, "eval.plot_clip_umap", True)):
-                                umap_state = int(cfg_select(config, "eval.umap_random_state", seed))
-                                row.update(write_clip_umap(
-                                    source_feats=source_feats,
-                                    fake_feats=fake_feats,
-                                    real_feats=real_feats,
-                                    source_paths=source_ref_paths,
-                                    fake_paths=fake_paths,
-                                    real_paths=real_ref_paths,
-                                    out_dir=combo_dir,
-                                    random_state=umap_state,
-                                ))
-                        except Exception as exc:
-                            append_metric_error(row, "clip", exc)
-                    elif "clip" in metrics and clip_init_error is not None:
-                        append_metric_error(row, "clip", clip_init_error)
-
-                    metrics_rows.append(row)
-                    write_metrics(metrics_rows, eval_out_dir)
+            merge_metric_row(row, eval_out_dir)
 
     barrier(is_ddp)
     if is_main:

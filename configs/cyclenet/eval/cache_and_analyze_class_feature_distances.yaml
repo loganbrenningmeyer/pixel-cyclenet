@@ -1,0 +1,107 @@
+# =========================
+# Run
+# =========================
+run:
+  seed: 42
+
+# =========================
+# Dataset
+# =========================
+data:
+  # Root directory for simulated RGB imagery.
+  sim_image_root: /develop/data/remote_sensing/tiled/projection/sim_proj
+  # Root directory for simulated label masks.
+  sim_label_root: /develop/data/remote_sensing/tiled/projection/sim_labels
+  # Root directory for real RGB imagery.
+  real_image_root: /develop/data/remote_sensing/tiled/projection/oem_proj
+  # Root directory for real label masks.
+  real_label_root: /develop/data/remote_sensing/tiled/projection/oem_labels
+
+  # Optional translated RGB root. Set to null to skip translated caching.
+  translated_image_root: /develop/data/remote_sensing/tiled/projection/cyclenet_sim_proj/oem_only/ema/step-30000/strength-0.1/cfg-11.0
+  # Label root for translated imagery. Usually the sim label root if translated images preserve sim masks.
+  translated_label_root: /develop/data/remote_sensing/tiled/projection/sim_labels
+
+  # Immediate parent directory names that identify RGB images.
+  # Set to null to scan all image files directly under the image root tree.
+  rgb_parent_dirs: null
+  # Immediate parent directory name that identifies label masks.
+  # Set to null when image_root and label_root already contain matched relative paths
+  # or flat filename-matched image/mask files.
+  label_parent_dir: null
+
+  # Cache directory for manifests, metadata, and class feature bundles.
+  cache_dir: /develop/code/eval/cyclenet/remote_sensing/class_feature_cache
+
+# =========================
+# Embedding
+# =========================
+embedding:
+  # DeepLab checkpoint used for class-conditional feature extraction.
+  deeplab_ckpt_path: /cgi/data/nvesd/workspaces/logan/code/land_mapping/runs/deeplab/oem_subset/real-sim/training/checkpoints/step-50000.ckpt
+  # DeepLab feature layer to pool over.
+  feature_layer: prelogits
+  # Number of semantic classes excluding ignore.
+  num_classes: 8
+  # Batch size for embedding extraction.
+  batch_size: 32
+  # Optional max number of image/mask pairs to cache per dataset. Set to null to use all pairs.
+  max_samples_per_dataset: null
+
+# =========================
+# Analysis
+# =========================
+analysis:
+  # Dataset name treated as the real/reference distribution.
+  reference_dataset: real
+  # Dataset names compared against the reference dataset.
+  comparison_datasets:
+    - sim
+    - translated
+  # Optional baseline dataset used to compute improvement deltas. Set to null to skip.
+  baseline_dataset: sim
+  # Output directory for CSV tables and metric plots.
+  out_dir: /develop/code/eval/cyclenet/remote_sensing/class_feature_cache/deeplab/analysis
+
+# =========================
+# Projection
+# =========================
+projection:
+  # Set true to generate per-class UMAP plots from the cached feature vectors.
+  create_umap: false
+  # Projection method for class-feature visualization.
+  method: umap
+  # Only 2D UMAP plots are currently supported here.
+  n_components: 2
+  random_state: 42
+
+# =========================
+# Plotting
+# =========================
+plotting:
+  title: 2D Embedding Projection
+  axis_pad_frac: 0.25
+
+  points:
+    show: true
+    alpha: 0.3
+    max_points_per_group: 500
+    size: 10
+
+  density:
+    show: true
+    alpha: 0.7
+    fill: false
+
+  marginal:
+    show: true
+
+  labels:
+    sim: Sim
+    real: Real
+    translated: Translated
+
+  colors:
+    sim: "#55A868"
+    real: "#C44E52"
+    translated: "#4C72B0"

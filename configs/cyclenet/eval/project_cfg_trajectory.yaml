@@ -1,0 +1,71 @@
+# =========================
+# Run
+# =========================
+run:
+  seed: 42
+
+# =========================
+# Dataset
+# =========================
+data:
+  projection_root: /develop/code/eval/cyclenet/remote_sensing/project_translated/all_real
+  reference_cache_dir: /develop/code/eval/cyclenet/remote_sensing/project_translated/reference_cache
+  out_dir: /develop/code/eval/cyclenet/remote_sensing/project_cfg_trajectory/all_real
+
+# =========================
+# Embedding
+# =========================
+embedding:
+  model: clip
+
+  clip_path: /cgi/data/nvesd/workspaces/logan/data/pre_trained_models/clip
+  deeplab_path: /cgi/data/nvesd/workspaces/logan/code/land_mapping/runs/deeplab/oem_subset/real-sim/training/checkpoints/step-50000.ckpt
+  feature_layer: prelogits
+  batch_size: 32
+  num_samples: 2000
+
+# =========================
+# Projection
+# =========================
+projection:
+  method: umap
+  n_components: 2
+  random_state: 42
+
+# =========================
+# Trajectory
+# =========================
+trajectory:
+  step: 7500
+  noise_strength: 0.3
+  cfg_weights: [1.0, 2.0, 3.0, 4.0, 5.0]
+
+# =========================
+# Plotting
+# =========================
+plotting:
+  title: Translated Centroid Trajectory Across CFG Weights
+  axis_pad_frac: 0.25
+
+  reference:
+    max_points_per_group: 500
+    alpha: 0.3
+    point_size: 10
+
+  trajectory:
+    color: "#4C72B0"
+    alpha: 1.0
+    line_width: 2.0
+    marker_size: 55.0
+    annotate_cfg: true
+    annotation_dx: 0.02
+    annotation_dy: 0.02
+
+  labels:
+    sim: Sim
+    real: Real
+    trajectory: Translated centroid trajectory
+
+  colors:
+    sim: "#55A868"
+    real: "#C44E52"

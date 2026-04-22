@@ -1,0 +1,66 @@
+# =========================
+# Run
+# =========================
+run:
+  run_dir: /develop/code/runs/cyclenet/remote_sensing/all_real
+  ckpt_name: step-20000.ckpt
+  seed: 1
+  model_key: ema_model
+
+# =========================
+# Dataset
+# =========================
+data:
+  src_dir: /develop/data/remote_sensing/tiled/sim_subset/sim_test
+  src_idx: 0
+
+  rgb_parent_dirs:
+    - opt
+
+  out_dir: /develop/code/eval/cyclenet/remote_sensing/cfg_str_grid/all_real/step-20000/ema
+  image_size: 256
+
+# =========================
+# Plotting
+# =========================
+plotting:
+  title: CFG Weight vs. Noise Strength
+  num_samples: 16
+  translation_seed: 42
+  dpi: 300
+  scale: 1.0
+  source_mode: grid_column  # `grid_column` repeats the source image as the leftmost column; `separate` keeps the legacy oversized source panel.
+  source_width_ratio: 1.0  # Relative width of the source-image column. Use `1.0` for a publication-style repeated first column.
+  source_gap_ratio: 0.15  # Gap between the source image and translated-image grid when `source_mode=separate`.
+  grid_wspace: 0.045  # Horizontal spacing between grid columns.
+  grid_hspace: 0.045  # Vertical spacing between translated-image panels.
+  show_source_divider: true  # Divider for the legacy `separate` source-panel layout.
+  source_divider_color: black  # Divider color for the legacy `separate` source-panel layout.
+  source_divider_linewidth: 0.5  # Divider line width for the legacy `separate` source-panel layout.
+  source_divider_gap_fraction: 0.5  # Divider position within the legacy `separate` source-to-grid gap.
+  source_label_position: top  # Show `Source (Sim)` above the source column instead of as a bottom label.
+  title_fontsize: 11.0  # Font size for the figure title above the translated grid.
+  title_y: 0.975  # Vertical position of the title.
+  xlabel_fontsize: 10.0  # Font size for the bottom CFG label.
+  xlabel_y: 0.06  # Vertical position of the bottom CFG label.
+  row_label_side: right  # Place the noise-strength row values on the right side beside the translated grid.
+  row_label_fontsize: 9.0  # Font size for the noise-strength row values.
+  row_label_right_pad: 0.02  # Horizontal padding used when row values are placed on the right side.
+  col_label_fontsize: 9.0  # Font size for the per-column CFG values below the translated grid.
+  ylabel_fontsize: 10.0  # Font size for the "Noise Strength" label.
+  ylabel_pad: 0.06  # Left-side offset for the y-axis label; smaller values move it closer to the grid.
+  ylabel_side: right  # Place the y-axis label on the right side with the row values.
+  ylabel_right_pad: 0.06  # Horizontal padding used when the y-axis label is placed on the right side.
+  subplot_top_with_title: 0.93  # Top of the image area when a title is present.
+  subplot_bottom_with_xlabels: 0.10  # Bottom of the image area when column/x labels are present.
+
+# =========================
+# Sampling
+# =========================
+sampling:
+  batch_size: 16
+  sampler: ddim
+  ddim_steps: 50
+  eta: 0.0
+  cfg_weights: [1.0, 2.0, 3.0, 4.0, 5.0]
+  noise_strengths: [0.1, 0.2, 0.3, 0.4, 0.5]

@@ -1,0 +1,221 @@
+# =========================
+# Run
+# =========================
+run:
+  seed: 42
+
+# =========================
+# Dataset
+# =========================
+data:
+  # Optional shared projection root. When comparing rows from different parent
+  # directories, set this to null and specify `projection_root` per row below.
+  projection_root: null
+  reference_cache_dir: /develop/code/eval/cyclenet/remote_sensing/project_translated/reference_cache
+  out_dir: /develop/code/eval/cyclenet/remote_sensing/project_grid/pareto
+
+# =========================
+# Projection
+# =========================
+projection:
+  method: umap
+  n_components: 2
+  random_state: 42
+
+# =========================
+# Comparison
+# =========================
+comparison:
+  embedding_model: deeplab
+  rows:
+    - label: 2.5k
+      projection_root: /develop/code/eval/cyclenet/remote_sensing/project_translated/oem_only/ema
+      step: 2500
+      noise_strength: 0.3
+    - label: 10k
+      projection_root: /develop/code/eval/cyclenet/remote_sensing/project_translated/all_real/pareto
+      step: 10000
+      noise_strength: 0.3
+    - label: 20k
+      projection_root: /develop/code/eval/cyclenet/remote_sensing/project_translated/all_real/pareto
+      step: 20000
+      noise_strength: 0.3
+    - label: 30k
+      projection_root: /develop/code/eval/cyclenet/remote_sensing/project_translated/all_real_ft_invar
+      step: 30000
+      noise_strength: 0.3
+
+  cfg_weights: [1.0, 2.0, 3.0, 4.0, 5.0]
+  output_name: umap_deeplab.pdf
+
+# =========================
+# Plotting
+# =========================
+plotting:
+  title: CLIP UMAP Projections Across CFG Values
+  axis_pad_frac: 0.15
+
+  row_titles:
+    clip: CLIP
+    inception: InceptionV3
+    deeplab: DeepLabv3
+
+  titles:
+    cfg_title_template: "$w = {cfg:g}$"
+    cfg_label_template: "{cfg:g}"
+    summary_title: Translated Centroid Trajectory
+    show_panel_titles: false
+    show_shared_column_titles: true
+    panel_fontsize: 11.0
+    column_title_fontsize: 11.0
+    column_title_pad: 0.008
+    bottom_cfg_label_pad: 0.018
+
+  labels:
+    sim: Sim
+    real: Real
+    translated: Translated
+    trajectory: Centroid trajectory
+    show_cfg_xlabel: true
+    cfg_xlabel: "CFG weight ($w$)"
+    cfg_xlabel_pad: 0.06
+    cfg_xlabel_fontsize: 16.0
+    show_bottom_xlabels: false
+    show_left_ylabels: false
+    show_summary_ylabels: false
+    show_global_xlabel: false
+    show_global_ylabel: false
+    global_xlabel: UMAP 1
+    global_ylabel: UMAP 2
+    global_xlabel_y: 0.045
+    global_ylabel_x: 0.045
+    global_xlabel_fontsize: 11.0
+    global_ylabel_fontsize: 11.0
+
+  colors:
+    sim: "#55A868"
+    real: "#C44E52"
+    translated: "#4C72B0"
+
+  layout:
+    fig_width: 10.0
+    fig_height: 6.0
+    summary_width_ratio: 1.0
+    wspace: 0.03
+    hspace: 0.04
+    left: 0.10
+    right: 0.98
+    top: 0.86
+    bottom: 0.15
+    title_y: 0.995
+    title_fontsize: 20.0
+    row_label_x: -0.065
+    row_label_fontsize: 16.0
+
+  panels:
+    force_square: true
+    box_aspect: 1.0
+    show_box: true
+    box_color: black
+    box_linewidth: 0.8
+    show_facecolor: false
+    facecolor: white
+
+  separators:
+    show_vertical_summary_separator: true
+    show_horizontal_row_separators: false
+    color: "#000000"
+    linewidth: 0.8
+    alpha: 0.8
+
+  legend:
+    show: true
+    position: top_center
+    reference: figure
+    loc: upper center
+    top_y: 0.955
+    right_pad: 0.008
+    overlap_pad_x: 0.006
+    title_gap: 0.012
+    headers_gap: 0.012
+    ncol: 4
+    fontsize: 14.0
+    frameon: false
+
+  points:
+    rasterize: true
+    rasterize_threshold: 3000
+
+  reference:
+    points:
+      show: true
+      max_points_per_group: 1000
+      alpha: 0.2
+      size: 4.0
+    kde:
+      show: true
+      max_points_per_group: 1000
+      levels: 6
+      fill: false
+      alpha: 0.3
+      linewidth: 1.0
+
+  translated:
+    points:
+      show: true
+      max_points_per_group: 1000
+      alpha: 0.4
+      size: 4.0
+    kde:
+      show: true
+      max_points_per_group: 1000
+      levels: 6
+      fill: false
+      alpha: 0.5
+      linewidth: 1.0
+
+  marginals:
+    show: false
+    size: "18%"
+    pad: 0.04
+    fill: false
+    alpha: 0.8
+    linewidth: 1.2
+
+  summary:
+    reference:
+      show_points: true
+      max_points_per_group: 500
+      alpha: 0.2
+      size: 4.0
+
+  trajectory:
+    color: "#4C72B0"
+    alpha: 1.0
+    line_width: 1.2
+
+    marker_size: 45.0
+    intermediate_marker_size: 18.0
+    start_marker_size: 40.0
+    end_marker_size: 52.0
+
+    marker: o
+    start_marker: o
+    end_marker: o
+    start_facecolor: white
+    end_facecolor: "#4C72B0"
+
+    edgecolor: white
+    edgewidth: 0.8
+
+    show_arrow: true
+    arrow_on_last_segment_only: true
+    arrowstyle: "-|>"
+    arrow_mutation_scale: 11.0
+    arrow_linewidth: 1.0
+    arrow_shrink_a: 0.0
+    arrow_shrink_b: 0.0
+    annotate_cfg: false
+    annotation_dx: 0.02
+    annotation_dy: 0.02
+    annotation_fontsize: 8.0

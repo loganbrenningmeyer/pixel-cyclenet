@@ -164,9 +164,17 @@ for the default remote-sensing setup.
 - `translate_sweep.py` and `translate_sweep_seg.py` generate deterministic
   translated candidate sets across checkpoint, CFG weight, and noise-strength
   grids.
+- As of 2026-04-20, `src/cyclenet/eval/scripts/analysis/translate_sweep.py`
+  supports `data.num_shards` / `data.shard_index` by partitioning sweep
+  candidate combinations rather than source images, so each shard can write
+  complete candidate outputs and metrics safely into the same eval directory.
 - Sweeps compare each translated candidate against a fixed saved real reference
   subset and also compute a source-vs-real baseline.
 - Reference manifests can be reused across reruns to keep comparisons stable.
+- As of 2026-04-20, repeated `translate_sweep.py` runs in the same `eval.out_dir`
+  preserve existing `metrics.csv` / `metrics.json` rows and append only missing
+  candidate configs. Metric writes are merged under a file lock so concurrent
+  shard runs do not clobber each other.
 - `analyze_translate_sweep.py` converts metrics into normalized realism and
   preservation scores and ranks candidates.
 - `analyze_translate_sweep.py` also supports sweep-level embedding projection
@@ -175,11 +183,125 @@ for the default remote-sensing setup.
   fit PCA/UMAP once on a fixed sampled sim+real reference set, then transform
   translated candidate embeddings into that same space so movement across
   checkpoints/CFG/strength can be compared directly.
+- As of 2026-04-22, `src/cyclenet/eval/scripts/project_cfg_grid.py` supports an
+  explicit `plotting.points.rasterize` config flag so dense scatter clouds can
+  be rasterized in PDF output while titles, lines, arrows, and other artists
+  remain vectorized. This is useful for thesis figures where large point clouds
+  can slow LaTeX/PDF rendering.
+- `project_translated.py` now also fixes plot axis limits from the cached
+  sim+real reference coordinates only, with optional padding via
+  `plotting.axis_pad_frac`, so translated runs do not visually rescale the
+  reference clouds across plots.
+- `project_translated.py` now skips embedder initialization entirely when the
+  cached sim, real, and translated embedding `.npy` files already exist for
+  the current run, making pure replotting much faster.
 - `analyze_translate_sweep_consensus.py` summarizes best settings across
   multiple sweep directories.
 - `project_translate_sweep_projections.py` adds PCA/t-SNE diagnostics.
 - `scripts/plot_translate_sweep_seg_overlays.py` is the main visual sanity
   check for segmentation preservation.
+- `scripts/plot_random_image_grid.py` is a minimal utility that recursively
+  samples images from a directory and saves a simple grid using configurable
+  `num_samples`, `n_rows`/`n_cols`, and horizontal/vertical panel spacing. It
+  is intended for quick thesis/sample-figure assembly without rerunning any
+  translation or projection workflow.
+- `scripts/plot_lpips_vs_fid_scatter.py` merges translation-sweep LPIPS and
+  FID CSVs on `(step, noise_strength, cfg_weight)`, saves the merged table, and
+  plots LPIPS-vs-FID tradeoff figures. As of 2026-04-21, the default figure
+  style is a cleaner thesis-oriented layout: one panel per checkpoint step,
+  a single marker shape, color-coded noise strengths with thin lines following
+  increasing CFG weight, an optional lower-left Pareto frontier, and optional
+  highlighting of the best joint LPIPS/FID tradeoff point. It is intended for
+  realism-vs-preservation tradeoff figures in the thesis workflow.
+- `scripts/analyze_checkpoint_metrics.py` performs cross-checkpoint selection
+  analysis given per-checkpoint LPIPS, FID, and DeepLab-FD CSVs. It merges the
+  metrics on `(step, noise_strength, cfg_weight)`, computes Pareto-optimal
+  flags for `(DeepLab FD, LPIPS)`, `(FID, DeepLab FD)`, and for the full
+  `(FID, LPIPS, DeepLab FD)` triplet, selects one operating point per
+  checkpoint using a configurable rule, and writes merged CSVs plus a
+  checkpoint summary table (including a LaTeX export) for thesis reporting.
+- `src/cyclenet/eval/plotting/heatmap.py` now supports LPIPS, FID, and
+  CLIP-FID sweep CSVs from the translation-evaluation helpers. As of
+  2026-04-22, it also supports DeepLab feature-space Fréchet distance CSVs.
+  It exposes
+  metric-specific `save_lpips_heatmaps_from_csv()`,
+  `save_fid_heatmaps_from_csv()`, and `save_clip_fid_heatmaps_from_csv()`
+  entry points while sharing the same core grid/annotation plotting logic, and
+  now also exposes `save_deeplab_fd_heatmaps_from_csv()`.
+- `src/cyclenet/eval/plotting/pareto.py` plots cross-checkpoint tradeoff
+  figures from the merged CSV produced by `scripts/analyze_checkpoint_metrics.py`.
+  It generates a 3-panel pairwise tradeoff grid
+  (`LPIPS/DeepLab FD`, `LPIPS/FID`, `DeepLab FD/FID`) plus a 3D scatter, with
+  checkpoint colors, Pareto-optimal points highlighted, and selected operating
+  points marked separately.
+- `src/cyclenet/eval/fid.py` now runs at the granularity of a single
+  `step-*` directory rather than scanning a whole translated-root tree. Point
+  `step_dir` at one checkpoint folder, and it will evaluate only that step's
+  `strength-* / cfg-*` subdirectories and save `fid_stats.csv` inside the
+  same `step-*` directory. As of 2026-04-21, `main()` also exposes a
+  `direct_pair` mode for one-off baseline comparisons such as `sim vs real`,
+  writing a small CSV with the baseline FID value.
+- `src/cyclenet/eval/lpips.py` now follows the same single-step workflow as
+  `fid.py`: point `step_dir` at one `step-*` directory, and it will evaluate
+  only that step's `strength-* / cfg-*` translated outputs against the source
+  sim directory and save `lpips_stats.csv` inside the same `step-*` directory.
+- `src/cyclenet/eval/clip_fid.py` mirrors that single-step sweep workflow for
+  CLIP-space Fréchet distance. It reuses cached CLIP embeddings from
+  `project_translated.py`, reading `reference_cache/clip/real_embed.npy` plus
+  each candidate directory's `clip_translated_embed.npy`, and writes
+  `clip_fid_stats.csv` inside the chosen `step-*` directory.
+- `src/cyclenet/eval/deeplab_fd.py` now mirrors the same single-step sweep
+  workflow for task-aware Fréchet distance in DeepLab feature space. Point it
+  at one `step-*` directory, a DeepLab checkpoint, and a DeepLab reference
+  cache directory; it will compute or reuse `real_embed.npy`, cache
+  `deeplab_translated_embed.npy` inside each `strength-* / cfg-*` directory,
+  and write `deeplab_fd_stats.csv` inside the chosen `step-*` directory.
+- `src/cyclenet/eval/frechet_dist.py` is now the shared helper for Fréchet
+  distance over arbitrary cached embedding arrays and is used by the CLIP and
+  DeepLab distribution-distance scripts.
+- `scripts/analyze_mask_dataset_by_class.py` provides mask-only sim-vs-real
+  dataset mismatch analysis, including per-class area fractions, connected
+  component counts, component size statistics, and boundary-density summaries.
+- `DeepLabEmbedder.embed_by_class()` in `src/cyclenet/eval/embed.py` now
+  supports class-masked feature pooling: it extracts spatial DeepLab features,
+  resizes label masks to feature resolution with nearest-neighbor sampling, and
+  returns per-image pooled feature vectors grouped by raw class id `1..8`.
+- `scripts/cache_class_feature_vectors.py` caches reusable DeepLab
+  class-conditional feature vectors for sim, real, and optional translated
+  datasets. It is configured by
+  `configs/cyclenet/eval/cache_class_feature_vectors.yaml` and writes
+  per-dataset pair manifests plus `.npz` feature bundles so later distance
+  computations do not need to rerun embedding extraction.
+- `scripts/analyze_class_feature_distances.py` consumes those cached class
+  feature bundles and computes per-class distance tables and plots against a
+  reference dataset, including Fréchet distance, centroid cosine/L2, and
+  baseline-improvement summaries. It can also optionally generate per-class
+  UMAP plots using the shared projector/plotting helpers with UMAP and plotting
+  settings defined directly in
+  `configs/cyclenet/eval/analyze_class_feature_distances.yaml`.
+- `scripts/cache_and_analyze_class_feature_distances.py` provides a one-shot
+  workflow that first computes or reuses cached DeepLab class feature bundles,
+  then immediately runs the per-class distance analysis and optional UMAP
+  plots. It is configured by
+  `configs/cyclenet/eval/cache_and_analyze_class_feature_distances.yaml`.
+- `src/cyclenet/translate_cyclenet_sweep.py` provides a lightweight
+  translation-only sweep for the RGB workflow across checkpoint step,
+  CFG weight, and noise strength, writing each candidate to its own output
+  directory without computing metrics.
+- `src/cyclenet/eval/scripts/plot_cfg_str_grid.py` now supports a rerun-only
+  plotting mode via `plotting.rerun_from_saved`, allowing grids to be rebuilt
+  directly from an existing `translated_samples` directory without rerunning
+  translation. Optional overrides can point to saved translated and source
+  sample folders explicitly. As of 2026-04-21, it also supports
+  `plotting.source_mode: grid_column`, which repeats the source image as the
+  leftmost grid column for a more standard publication-style layout instead of
+  using the older oversized standalone source panel. The shared
+  `plot_image_grid()` helper also now supports placing the source label above
+  the source column while keeping only the translated CFG labels on the bottom,
+  plus an explicit left-side `ylabel_pad` knob for tightening the y-axis
+  label. It also supports `title_span: full` so scripts such as
+  `plot_cfg_str_grid.py` can center the figure title across the full
+  source-plus-translation layout without changing x-label centering.
 
 # Key decisions
 
@@ -218,6 +340,11 @@ for the default remote-sensing setup.
   resume time (`loss_interval`, `ckpt_interval`, `sample_interval`). Logging
   overrides can be applied in-place on an existing run, or saved into a new
   branch config if `run.out_run_dir` is provided.
+- 2026-04-19: `src/cyclenet/eval/scripts/project_translated.py` now supports a
+  shared reference cache for projection analysis. Keep
+  `data.reference_cache_dir` fixed across translated-dataset runs so sim/real
+  embeddings and fitted PCA/UMAP projectors are reused; only translated
+  embeddings should vary per output directory.
 
 ## Non-obvious implementation details worth remembering
 
@@ -233,6 +360,53 @@ for the default remote-sensing setup.
   frozen-teacher objective for the shared decoder/final layer. With
   `invar_unet_grad=true`, the invariance branch directly updates that trainable
   target-side path, which materially changes optimization behavior.
+- `project_translated.py` intentionally reuses cached sim/real reference
+  manifests, embeddings, and fitted projectors. Translated embeddings are
+  cached per embedding model under `data.out_dir` as
+  `{model}_translated_embed.npy`, so repeated UMAP/PCA runs with the same
+  embedder reuse translated features while different embedders keep separate
+  caches.
+- `project_translated.py` also supports a template-driven sweep mode across
+  `embedding model`, `projection method`, `step`, `cfg`, and
+  `noise_strength` combinations. In sweep mode, keep
+  `data.reference_cache_dir` fixed, set `data.translated_dir_template`, and
+  optionally set `data.out_dir_template`; otherwise outputs fall back to
+  `data.out_dir / <model> / <method> / step-..._strength-..._cfg-...`.
+- `project_cfg_trajectory.py` is a lightweight follow-on analysis that reads
+  cached translated embedding arrays from an existing projection root, reuses
+  the cached reference projector/coords, and plots CFG centroid trajectories
+  at fixed step and noise strength without KDE or marginal panels.
+- `project_cfg_grid.py` builds a comparison figure over fixed CFG weights with
+  one projection panel per CFG value plus a trajectory summary panel per row.
+  It reads only cached translated embedding arrays and shared reference caches,
+  and exposes optional KDE/marginal overlays through config. As of 2026-04-20,
+  the cleaner default presentation is shared column headers instead of repeated
+  per-panel CFG titles, boxed subplot frames, optional global axis labels, and
+  an optional vertical separator before the trajectory column. Its
+  translated-embedding lookup now assumes
+  `projection_root/step-.../strength-.../cfg-.../<model>_translated_embed.npy`
+  rather than an extra `<model>/` subdirectory, and the trajectory panel now
+  supports unlabeled centroid ordering via configurable arrow rendering. As of
+  2026-04-21, CFG-grid panels also default to `plotting.panels.force_square:
+  true` with `summary_width_ratio: 1.0`, so changing row count or figure
+  height does not leave the projection panels narrower than the trajectory
+  summary panels. The script now also supports a row-per-translation-setting
+  mode via `comparison.rows` plus a fixed `comparison.embedding_model`, which
+  is intended for thesis figures that compare checkpoints such as `2.5k` vs
+  `30k` across the same CFG sweep in a single embedding space. As of
+  2026-04-21, each row can also override `projection_root`, so one figure can
+  compare translated candidates coming from entirely different parent model
+  directories instead of assuming all rows share one common projection root.
+  As of 2026-04-21, `plotting.legend.position: top_right` places the legend in
+  the header band on the right and automatically keeps it between the suptitle
+  and the shared column headers in the default layout to avoid overlap. The
+  legend placement now checks horizontal overlap before moving, so with
+  `plotting.legend.reference: figure` it can stay tucked into the top-right
+  corner instead of being pushed below the centered title when the two do not
+  actually intersect. As of 2026-04-21, the default thesis-style CFG-grid
+  labeling convention places CFG values as bottom numeric labels under the
+  non-trajectory projection columns and centers `CFG weight ($w$)` under those
+  columns only, instead of using top `w = ...` headers for the CFG panels.
 - In CycleNet losses, the repo follows the official implementation behavior,
   which differs from the paper in some conditioning details. The notes in
   `info/cyclenet_info.md` and `info/loss_grads.md` are the source of truth for
@@ -241,6 +415,20 @@ for the default remote-sensing setup.
   training code.
 - Evaluation scripts expect local model assets for CLIP and Inception in the
   configured cache paths; they are not written as online-download-first tools.
+- `project_translated.py` writes cache metadata and reference path manifests in
+  the shared reference cache directory. If sim/real roots, embedding model, or
+  sampling settings change, point it at a new cache directory or remove the
+  stale cache instead of silently reusing mismatched artifacts.
+- In `project_translated.py`, setting `embedding.num_samples` to `null` means
+  "use all collected images" for sim, real, and translated sets. That `null`
+  value is part of the reference-cache metadata, so it is intentionally
+  distinguished from a finite sample count.
+- `plot_cfg_str_grid.py` now saves individual translated outputs alongside the
+  summary grid PDFs. The per-sample layout is
+  `translated_samples/<sample_name>/strength-x.xx/cfg-x.x/img.png`, matching
+  the training sample naming convention closely enough to compare settings
+  without resampling.
+  treated as distinct from any fixed sample count.
 - In DDIM translation, larger `noise_strength` both starts from a noisier point
   and uses more reverse denoising steps in this repo's implementation because
   strength selects the truncated starting index from the uniformly spaced DDIM

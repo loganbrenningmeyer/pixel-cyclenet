@@ -47,3 +47,6 @@ If `docs/PROJECT_CONTEXT.md` does not exist, create it with these sections:
 - Constraints and conventions
 - Open issues / risks
 - Next recommended steps
+
+## Script Template
+When you create scripts, create them so that they are configured in the scripts main() function, not through command line arguments. Add comments for the parameter input lines in the main() function describing what they are for.

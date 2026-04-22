@@ -34,6 +34,8 @@ def plot_proj_scatter(
     seed: int = 42,
     alpha: float = 0.5,
     point_size: float = 10.0,
+    xlim: tuple[float, float] | None = None,
+    ylim: tuple[float, float] | None = None,
 ):
     """
     
@@ -69,6 +71,10 @@ def plot_proj_scatter(
     ax.set_title(title)
     ax.set_xlabel(xlabel)
     ax.set_ylabel(ylabel)
+    if xlim is not None:
+        ax.set_xlim(xlim)
+    if ylim is not None:
+        ax.set_ylim(ylim)
     ax.legend(frameon=False)
 
     # -------------------------
@@ -97,6 +103,8 @@ def plot_proj_density(
     point_alpha: float = 0.1,
     point_size: float = 10.0,
     show_points: bool = False,
+    xlim: tuple[float, float] | None = None,
+    ylim: tuple[float, float] | None = None,
 ):
     rng = np.random.default_rng(seed)
     legend_handles = []
@@ -136,6 +144,10 @@ def plot_proj_density(
     ax.set_title(title)
     ax.set_xlabel(xlabel)
     ax.set_ylabel(ylabel)
+    if xlim is not None:
+        ax.set_xlim(xlim)
+    if ylim is not None:
+        ax.set_ylim(ylim)
     ax.set_xticks([])
     ax.set_yticks([])
     if show_points:
@@ -168,6 +180,8 @@ def plot_proj_density_marginal(
     point_alpha: float = 0.1,
     point_size: float = 10.0,
     show_points: bool = False,
+    xlim: tuple[float, float] | None = None,
+    ylim: tuple[float, float] | None = None,
 ):
     rng = np.random.default_rng(seed)
     rows = []
@@ -176,7 +190,7 @@ def plot_proj_density_marginal(
             {
                 xlabel: float(x),
                 ylabel: float(y),
-                "group": label,
+                "Dataset": label,
             }
             for x, y in xy
         )
@@ -188,7 +202,7 @@ def plot_proj_density_marginal(
         data=df,
         x=xlabel,
         y=ylabel,
-        hue="group",
+        hue="Dataset",
         kind="kde",
         fill=fill,
         levels=6,
@@ -196,6 +210,7 @@ def plot_proj_density_marginal(
         palette=palette,
         height=6.5,
         space=0,
+        common_norm=False,
     )
 
     if show_points:
@@ -214,6 +229,12 @@ def plot_proj_density_marginal(
 
     g.ax_joint.set_xlabel(xlabel)
     g.ax_joint.set_ylabel(ylabel)
+    if xlim is not None:
+        g.ax_joint.set_xlim(xlim)
+        g.ax_marg_x.set_xlim(xlim)
+    if ylim is not None:
+        g.ax_joint.set_ylim(ylim)
+        g.ax_marg_y.set_ylim(ylim)
     g.ax_joint.set_xticks([])
     g.ax_joint.set_yticks([])
     g.ax_marg_x.set_xticklabels([])

@@ -15,6 +15,14 @@ data:
   # -- [Source Domain] - (0): Sim, (1): Real
   src_idx: 0
 
+  # -- Optional sweep sharding across independent evaluation runs.
+  # -- For two concurrent runs, set num_shards: 2 in both configs and use
+  # -- shard_index: 0 for the first run and shard_index: 1 for the second.
+  # -- Shards split checkpoint / strength / cfg candidate combinations so
+  # -- each shard writes complete translated sets and metrics rows.
+  # num_shards: 4
+  # shard_index: 0
+
   # -- Only include images whose immediate parent dir matches these names.
   # -- Set to null to include every image under src_dir.
   rgb_parent_dirs:
@@ -60,6 +68,8 @@ sweep:
 # =========================
 eval:
   out_dir: /develop/code/eval/cyclenet/remote_sensing/translate_sweep/all_real_edges
+  # -- Re-running in the same out_dir keeps existing metrics rows and appends
+  # -- only missing candidate configs. Existing completed candidates are skipped.
 
   # -- If null, defaults to the CycleNet training config's data.tgt_dir.
   real_dir: /cgi/data/nvesd/workspaces/logan/data/remote_sensing/tiled/real/OEM

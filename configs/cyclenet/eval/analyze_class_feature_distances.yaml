@@ -1,0 +1,59 @@
+# =========================
+# Dataset
+# =========================
+data:
+  # Root directory containing cached `<dataset>/deeplab_class_features.npz` bundles.
+  cache_dir: /develop/code/eval/cyclenet/remote_sensing/class_feature_cache/deeplab
+  # Dataset name treated as the real/reference distribution.
+  reference_dataset: real
+  # Dataset names compared against the reference dataset.
+  comparison_datasets:
+    - sim
+    - translated
+  # Optional baseline dataset used to compute improvement deltas. Set to null to skip.
+  baseline_dataset: sim
+  # Output directory for CSV tables and metric plots.
+  out_dir: /develop/code/eval/cyclenet/remote_sensing/class_feature_cache/deeplab/analysis
+
+# =========================
+# Projection
+# =========================
+projection:
+  # Set true to generate per-class UMAP plots from the cached feature vectors.
+  create_umap: true
+  # Projection method for class-feature visualization.
+  method: umap
+  # Only 2D UMAP plots are currently supported here.
+  n_components: 2
+  random_state: 42
+
+# =========================
+# Plotting
+# =========================
+plotting:
+  title: 2D Embedding Projection
+  axis_pad_frac: 0.25
+
+  points:
+    show: true
+    alpha: 0.3
+    max_points_per_group: 500
+    size: 10
+
+  density:
+    show: true
+    alpha: 0.7
+    fill: false
+
+  marginal:
+    show: true
+
+  labels:
+    sim: Sim
+    real: Real
+    translated: Translated
+
+  colors:
+    sim: "#55A868"
+    real: "#C44E52"
+    translated: "#4C72B0"
