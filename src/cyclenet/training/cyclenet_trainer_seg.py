@@ -11,8 +11,9 @@ from tqdm import tqdm
 from collections import deque
 
 from cyclenet.models import CycleNet
+from cyclenet.models.conditioning import build_condition_input, build_seg_modulation_input
 from cyclenet.models.utils import unwrap
-from cyclenet.diffusion import DiffusionSchedule, cyclenet_ddpm_loop, cyclenet_ddim_loop, build_seg_condition
+from cyclenet.diffusion import DiffusionSchedule, cyclenet_ddpm_loop, cyclenet_ddim_loop
 from cyclenet.diffusion.losses import cyclenet_loss_seg
 
 
@@ -64,6 +65,10 @@ class CycleNetTrainerSeg:
         self.invar_weight_ramp_steps = int(
             OmegaConf.select(model_config, "invar_weight_ramp_steps", 0)
         )
+
+        # -- Conditioning mode / SPADE modulation
+        self.cond_mode = model_config.cond_mode
+        self.use_spade = model_config.use_spade
 
         # -- Track running averages of losses
         self._raw_recon_hist = deque(maxlen=100)
@@ -199,6 +204,8 @@ class CycleNetTrainerSeg:
                 src_idx=src_idx,
                 tgt_idx=tgt_idx,
                 sched=self.sched,
+                cond_mode=self.cond_mode,
+                use_spade=self.use_spade,
                 invar_unet_grad=self.model_config.invar_unet_grad,
             )
 
@@ -303,7 +310,8 @@ class CycleNetTrainerSeg:
         # Define source / target indices (x_src is all source)
         # -------------------------
         x_src, seg_src = self._next_sample_batch()
-        c_img = build_seg_condition(x_src, seg_src)
+        c_img = build_condition_input(x_src, seg_src, self.cond_mode)
+        seg_mod = build_seg_modulation_input(seg_src, self.use_spade)
 
         B = x_src.shape[0]
 
@@ -339,6 +347,7 @@ class CycleNetTrainerSeg:
                         src_idx=src_idx, 
                         tgt_idx=tgt_idx,
                         c_img=c_img,
+                        seg=seg_mod,
                         sched=self.sched,
                         w=cfg_weight,
                         strength=noise_strength
@@ -355,6 +364,7 @@ class CycleNetTrainerSeg:
                         src_idx=src_idx, 
                         tgt_idx=tgt_idx,
                         c_img=c_img,
+                        seg=seg_mod,
                         sched=self.sched,
                         w=cfg_weight,
                         strength=noise_strength,

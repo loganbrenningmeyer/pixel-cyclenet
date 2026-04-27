@@ -8,7 +8,6 @@ from .sampling import (
     cyclenet_ddim_loop,
     cyclenet_ddpm_loop,
 )
-from .losses import build_seg_condition
 
 __all__ = [
     "DiffusionSchedule",
@@ -20,5 +19,4 @@ __all__ = [
     "unet_ddpm_loop",
     "cyclenet_ddim_loop",
     "cyclenet_ddpm_loop",
-    "build_seg_condition",
 ]

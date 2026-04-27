@@ -14,6 +14,7 @@ from cyclenet.training import CycleNetTrainerSeg
 from cyclenet.data import CycleDomainSegDataset, SourceSegDataset, DomainSampler, load_cyclenet_transforms
 from cyclenet.diffusion import DiffusionSchedule
 from cyclenet.models import CycleNet, UNet, ControlNet
+from cyclenet.models.controlnet import build_controlnet
 from cyclenet.models.conditioning import DomainEmbedding
 from cyclenet.models.utils import unwrap
 
@@ -234,9 +235,22 @@ def main():
     # Initialize ControlNet with segmentation map channels
     # -------------------------
     num_seg_classes = config.model.num_seg_classes
-    control_in_ch = 3 + num_seg_classes
+    cond_mode = config.model.cond_mode
+    use_spade = config.model.use_spade
+    s_dim = OmegaConf.select(config, "model.s_dim", default=None)
 
-    control = ControlNet(backbone, in_ch=control_in_ch).to(device)
+    skip_block_mask = OmegaConf.select(config, "model.skip_block_mask", default=None)
+    use_mid_skip = OmegaConf.select(config, "model.use_mid_skip", default=True)
+
+    control = build_controlnet(
+        backbone=backbone,
+        cond_mode=cond_mode,
+        num_seg_classes=num_seg_classes,
+        use_spade=use_spade,
+        s_dim=s_dim,
+        skip_block_mask=skip_block_mask,
+        use_mid_skip=use_mid_skip,
+    ).to(device)
 
     # -------------------------
     # Initialize CycleNet / EMA model

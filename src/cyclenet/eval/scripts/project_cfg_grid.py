@@ -365,6 +365,10 @@ def draw_trajectory_panel(
     end_marker = str(cfg_select(config, "plotting.trajectory.end_marker", marker_style))
     edgecolor = str(cfg_select(config, "plotting.trajectory.edgecolor", "white"))
     edgewidth = float(cfg_select(config, "plotting.trajectory.edgewidth", 0.8))
+    start_edgecolor = str(cfg_select(config, "plotting.trajectory.start_edgecolor", edgecolor))
+    start_edgewidth = float(cfg_select(config, "plotting.trajectory.start_edgewidth", edgewidth))
+    end_edgecolor = str(cfg_select(config, "plotting.trajectory.end_edgecolor", edgecolor))
+    end_edgewidth = float(cfg_select(config, "plotting.trajectory.end_edgewidth", edgewidth))
     start_facecolor = str(cfg_select(config, "plotting.trajectory.start_facecolor", "white"))
     end_facecolor = str(cfg_select(config, "plotting.trajectory.end_facecolor", traj_color))
 
@@ -388,8 +392,8 @@ def draw_trajectory_panel(
             s=start_marker_size,
             marker=start_marker,
             facecolors=start_facecolor,
-            edgecolors=traj_color,
-            linewidths=edgewidth,
+            edgecolors=start_edgecolor,
+            linewidths=start_edgewidth,
             alpha=traj_alpha,
             zorder=5,
         )
@@ -401,8 +405,8 @@ def draw_trajectory_panel(
             s=end_marker_size,
             marker=end_marker,
             facecolors=end_facecolor,
-            edgecolors=edgecolor,
-            linewidths=edgewidth,
+            edgecolors=end_edgecolor,
+            linewidths=end_edgewidth,
             alpha=traj_alpha,
             zorder=5,
         )
@@ -883,12 +887,18 @@ def main():
     fig_w = float(cfg_select(config, "plotting.layout.fig_width", 18.0))
     fig_h = float(cfg_select(config, "plotting.layout.fig_height", 7.0))
     summary_width_ratio = float(cfg_select(config, "plotting.layout.summary_width_ratio", 1.0))
+    summary_gap_ratio = float(cfg_select(config, "plotting.layout.summary_gap_ratio", 0.0))
+    width_ratios = [1.0] * n_cfg
+    if summary_gap_ratio > 0.0:
+        # Reserve an empty column so only the summary panel gets extra left-side spacing.
+        width_ratios.append(summary_gap_ratio)
+    width_ratios.append(summary_width_ratio)
 
     fig = plt.figure(figsize=(fig_w, fig_h))
     gs = fig.add_gridspec(
         n_rows,
-        n_cfg + 1,
-        width_ratios=[1.0] * n_cfg + [summary_width_ratio],
+        len(width_ratios),
+        width_ratios=width_ratios,
         wspace=float(cfg_select(config, "plotting.layout.wspace", 0.18)),
         hspace=float(cfg_select(config, "plotting.layout.hspace", 0.18)),
         left=float(cfg_select(config, "plotting.layout.left", 0.08)),
@@ -990,14 +1000,14 @@ def main():
         row_title = str(row_spec["label"])
         row_label_artists.append(
             ax.text(
-                float(cfg_select(config, "plotting.layout.row_label_x", -0.30)),
-                0.5,
-                row_title,
-                transform=ax.transAxes,
-                ha="right",
-                va="center",
-                fontsize=float(cfg_select(config, "plotting.layout.row_label_fontsize", 12.0)),
-            )
+            float(cfg_select(config, "plotting.layout.row_label_x", -0.30)),
+            0.5,
+            row_title,
+            transform=ax.transAxes,
+            ha="right",
+            va="center",
+            fontsize=float(cfg_select(config, "plotting.layout.row_label_fontsize", 12.0)),
+        )
         )
 
     all_axes = [ax for row_axes in main_axes for ax in row_axes] + summary_axes
@@ -1035,8 +1045,20 @@ def main():
             marker="o",
             markersize=6,
             markerfacecolor=str(cfg_select(config, "plotting.trajectory.end_facecolor", str(config.plotting.colors.translated))),
-            markeredgecolor=str(cfg_select(config, "plotting.trajectory.edgecolor", "white")),
-            markeredgewidth=float(cfg_select(config, "plotting.trajectory.edgewidth", 0.8)),
+            markeredgecolor=str(
+                cfg_select(
+                    config,
+                    "plotting.trajectory.end_edgecolor",
+                    cfg_select(config, "plotting.trajectory.edgecolor", "white"),
+                )
+            ),
+            markeredgewidth=float(
+                cfg_select(
+                    config,
+                    "plotting.trajectory.end_edgewidth",
+                    cfg_select(config, "plotting.trajectory.edgewidth", 0.8),
+                )
+            ),
             label=str(config.plotting.labels.trajectory),
         )
     ]

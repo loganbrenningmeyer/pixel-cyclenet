@@ -306,8 +306,8 @@ class TranslateDataset(Dataset):
         self, 
         src_dir: str, 
         image_size: int = 224,
-        file_exts: set[str] = {".jpg", ".png", ".tif", ".tiff"},
         rgb_parent_dirs: set[str] = {"opt"},
+        file_exts: set[str] = {".jpg", ".png", ".tif", ".tiff"},
     ):
         # -------------------------
         # Store all images in src_dir

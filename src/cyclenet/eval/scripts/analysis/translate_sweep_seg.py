@@ -287,8 +287,13 @@ def build_model(cyclenet_config: DictConfig, unet_config: DictConfig, device: to
     ).to(device)
 
     domain_emb = DomainEmbedding(d_dim=unet_config.model.d_dim).to(device)
+
     num_seg_classes = int(cyclenet_config.model.num_seg_classes)
-    control = ControlNet(backbone, in_ch=3 + num_seg_classes).to(device)
+    # -- RGB + seg or seg only
+    use_rgb_condition = cyclenet_config.model.use_rgb_condition
+    control_in_ch = num_seg_classes + 3 if use_rgb_condition else num_seg_classes
+
+    control = ControlNet(backbone, in_ch=control_in_ch).to(device)
 
     return CycleNet(
         backbone=backbone,
@@ -737,6 +742,7 @@ def translate_candidate(
     device: torch.device,
     sched: DiffusionSchedule,
     src_domain_idx: int,
+    use_rgb_condition: bool,
     sampler: str,
     cfg_weight: float,
     noise_strength: float,
@@ -762,7 +768,7 @@ def translate_candidate(
             bsz = x_src.shape[0]
             x_src = x_src.to(device, non_blocking=True)
             seg_src = seg_src.to(device, non_blocking=True)
-            c_img = build_seg_condition(x_src, seg_src)
+            c_img = build_seg_condition(x_src, seg_src, use_rgb_condition)
 
             src_idx = torch.full((bsz,), src_domain_idx, device=device, dtype=torch.long)
             tgt_idx = torch.full((bsz,), tgt_domain_idx, device=device, dtype=torch.long)
@@ -857,6 +863,7 @@ def main():
     real_parent_dirs = as_parent_dir_set(cfg_select(config, "eval.real_rgb_parent_dirs", cfg_select(cyclenet_config, "data.rgb_parent_dirs", None)))
     image_size = int(config.data.image_size)
     num_seg_classes = int(cfg_select(config, "model.num_seg_classes", cyclenet_config.model.num_seg_classes))
+    use_rgb_condition = cyclenet_config.model.use_rgb_condition
     label_parent_dir = str(cfg_select(config, "data.label_parent_dir", cfg_select(cyclenet_config, "data.label_parent_dir", "gt_ss_mask")))
 
     source_dataset = TranslateSegDataset(
@@ -1094,6 +1101,7 @@ def main():
                     device=device,
                     sched=sched,
                     src_domain_idx=src_domain_idx,
+                    use_rgb_condition=use_rgb_condition,
                     sampler=sampler,
                     cfg_weight=cfg_weight,
                     noise_strength=noise_strength,

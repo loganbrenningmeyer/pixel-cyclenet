@@ -148,11 +148,13 @@ class TransformerBlock(nn.Module):
         ffn_mult: int = 4,
     ):
         super().__init__()
+        self.num_heads = num_heads
+        
         if in_ch % num_heads != 0:
             raise ValueError(
                 f"in_ch ({in_ch}) must be divisible by num_heads ({num_heads})"
             )
-
+        
         # -- Self-attention / Cross-attention
         self.self_attn = SelfAttentionBlock(in_ch, num_heads, attn_dropout)
         self.cross_attn = CrossAttentionBlock(in_ch, d_dim, num_heads, attn_dropout)

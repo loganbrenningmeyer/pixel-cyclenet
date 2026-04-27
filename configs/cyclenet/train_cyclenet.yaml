@@ -2,7 +2,7 @@
 # Run
 # =========================
 run:
-  name: "all_real_invar_grad_ramp"
+  name: "all_real"
   runs_dir: "/develop/code/runs/cyclenet/remote_sensing"
 
   # -- UNet Backbone ckpt
@@ -16,7 +16,7 @@ run:
 train:
   steps: 50000
   batch_size: 16
-  lr: 5e-6
+  lr: 1e-5
   weight_decay: 1e-4
   ema_decay: 0.9999
 
@@ -28,10 +28,11 @@ model:
   cycle_weight: 0.01
   consis_weight: 0.1
   invar_weight: 0.1
-  invar_weight_start: 0.0
-  invar_weight_ramp_steps: 15000
 
-  invar_unet_grad: true
+  invar_weight_ramp_steps: 0
+  invar_weight_start: 0.1
+
+  invar_unet_grad: false
 
 # =========================
 # Dataset

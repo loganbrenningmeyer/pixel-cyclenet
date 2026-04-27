@@ -2,8 +2,14 @@
 # Run
 # =========================
 run:
-  run_dir: /develop/code/runs/cyclenet/remote_sensing/all_real
+  run_dir: /develop/code/runs/cyclenet/remote_sensing/seg/oem_only_seg
   model_key: ema_model
+
+# =========================
+# Model
+# =========================
+model:
+  num_seg_classes: 8
 
 # =========================
 # Dataset
@@ -19,13 +25,16 @@ data:
   num_shards: 2
   shard_index: 1
 
-  rgb_parent_dirs: null
-    # - opt
+  # -- Required for seg sweeps so RGB images can be paired with masks.
+  rgb_parent_dirs:
+    - opt
+    # - pre_opt
+  label_parent_dir: gt_ss_mask
 
   # If out_dir_template is omitted, outputs are written under data.out_dir /
   # step-..._strength-..._cfg-...
-  # out_dir: /develop/data/remote_sensing/tiled/projection/cyclenet_sim_proj/all_real
-  out_dir_template: /develop/data/remote_sensing/tiled/projection/cyclenet_sim_proj/all_real/ema/step-{step}/strength-{strength}/cfg-{cfg}
+  # out_dir: /develop/data/remote_sensing/tiled/projection/cyclenet_sim_proj/seg/oem_only_seg
+  out_dir_template: /develop/data/remote_sensing/tiled/projection/cyclenet_sim_proj/seg/oem_only_seg/ema/step-{step}/strength-{strength}/cfg-{cfg}
   image_size: 256
 
 # =========================

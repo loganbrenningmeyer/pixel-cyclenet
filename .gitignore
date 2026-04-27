@@ -5,11 +5,11 @@ runs/
 wandb/
 .DS_Store
 Icon?
-data/fashion/*
-data/mnist/*
+data/
+!src/cyclenet/data/
 torch_datasets/
 .codex
 utils/
 CycleNet/
-data/
 outputs/
+info/thesis-wip.pdf

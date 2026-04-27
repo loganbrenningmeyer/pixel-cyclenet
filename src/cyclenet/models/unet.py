@@ -35,8 +35,12 @@ class UNet(nn.Module):
         super().__init__()
 
         self.base_ch = base_ch
-        self.num_res_blocks = num_res_blocks
+        self.t_dim = t_dim
+        self.d_dim = d_dim
         self.ch_mults = ch_mults
+        self.num_res_blocks = num_res_blocks
+        self.enc_heads = enc_heads
+        self.mid_heads = mid_heads
 
         # -------------------------
         # Time Embedding MLP

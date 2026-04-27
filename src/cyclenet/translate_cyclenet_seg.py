@@ -11,9 +11,10 @@ from omegaconf import OmegaConf, DictConfig
 from tqdm import tqdm
 
 from cyclenet.data import TranslateSegDataset
-from cyclenet.diffusion import DiffusionSchedule, cyclenet_ddim_loop, cyclenet_ddpm_loop, build_seg_condition
-from cyclenet.models import CycleNet, UNet, ControlNet
-from cyclenet.models.conditioning import DomainEmbedding
+from cyclenet.diffusion import DiffusionSchedule, cyclenet_ddim_loop, cyclenet_ddpm_loop
+from cyclenet.models import CycleNet, UNet
+from cyclenet.models.controlnet import build_controlnet
+from cyclenet.models.conditioning import DomainEmbedding, build_condition_input, build_seg_modulation_input
 
 
 def ddp_setup():
@@ -143,9 +144,22 @@ def main():
     # Initialize ControlNet with segmentation map channels
     # -------------------------
     num_seg_classes = cyclenet_config.model.num_seg_classes
-    control_in_ch = 3 + num_seg_classes
+    cond_mode = cyclenet_config.model.cond_mode
+    use_spade = cyclenet_config.model.use_spade
+    s_dim = OmegaConf.select(cyclenet_config, "model.s_dim", default=None)
 
-    control = ControlNet(backbone, in_ch=control_in_ch).to(device)
+    skip_block_mask = OmegaConf.select(cyclenet_config, "model.skip_block_mask", default=None)
+    use_mid_skip = OmegaConf.select(cyclenet_config, "model.use_mid_skip", default=True)
+
+    control = build_controlnet(
+        backbone=backbone,
+        cond_mode=cond_mode,
+        num_seg_classes=num_seg_classes,
+        use_spade=use_spade,
+        s_dim=s_dim,
+        skip_block_mask=skip_block_mask,
+        use_mid_skip=use_mid_skip,
+    ).to(device)
 
     # -------------------------
     # Load CycleNet (EMA model)
@@ -213,7 +227,9 @@ def main():
             # -- Move to GPU / create control image
             x_src = x_src.to(device, non_blocking=True)
             seg_src = seg_src.to(device, non_blocking=True)
-            c_img = build_seg_condition(x_src, seg_src)
+
+            c_img = build_condition_input(x_src, seg_src, cond_mode)
+            seg_mod = build_seg_modulation_input(seg_src, use_spade)
 
             with autocast(device_type="cuda"):
                 # -------------------------
@@ -226,6 +242,7 @@ def main():
                         src_idx=src_idx,
                         tgt_idx=tgt_idx,
                         c_img=c_img,
+                        seg=seg_mod,
                         sched=sched,
                         w=cfg_weight,
                         strength=noise_strength,
@@ -240,6 +257,7 @@ def main():
                         src_idx=src_idx,
                         tgt_idx=tgt_idx,
                         c_img=c_img,
+                        seg=seg_mod,
                         sched=sched,
                         w=cfg_weight,
                         strength=noise_strength,

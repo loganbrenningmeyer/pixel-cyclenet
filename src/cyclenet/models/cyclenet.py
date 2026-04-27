@@ -44,6 +44,7 @@ class CycleNet(nn.Module):
         from_idx: torch.Tensor,
         to_idx: torch.Tensor,
         c_img: torch.Tensor,
+        seg: torch.Tensor | None = None,
         enable_unet_grad: bool = True,
     ) -> torch.Tensor:
         """
@@ -69,7 +70,7 @@ class CycleNet(nn.Module):
         # -------------------------
         # ControlNet: (origin domain)
         # -------------------------
-        ctrl_skips = self.control(x_t, t, c_img, from_emb)
+        ctrl_skips = self.control(x_t, t, c_img, from_emb, seg)
 
         # -------------------------
         # UNet Backbone Encode: (destination domain)

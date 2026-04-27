@@ -14,6 +14,7 @@ def cyclenet_ddpm_step(
     tgt_idx: torch.Tensor,
     c_img: torch.Tensor,
     sched: DiffusionSchedule,
+    seg: torch.Tensor | None = None,
     w: float = 1.0,
 ) -> torch.Tensor:
     """
@@ -34,7 +35,16 @@ def cyclenet_ddpm_step(
     # -------------------------
     # Classifier-Free Guidance: Predict noise
     # -------------------------
-    eps_pred = predict_cyclenet_cfg(model, x_t, t, src_idx, tgt_idx, c_img, w)
+    eps_pred = predict_cyclenet_cfg(
+        model=model, 
+        x_t=x_t, 
+        t=t, 
+        src_idx=src_idx, 
+        tgt_idx=tgt_idx, 
+        c_img=c_img, 
+        seg=seg, 
+        w=w,
+    )
 
     # -------------------------
     # Predict x_t-1 from eps_pred
@@ -50,6 +60,7 @@ def cyclenet_ddpm_loop(
     tgt_idx: torch.Tensor,
     c_img: torch.Tensor,
     sched: DiffusionSchedule,
+    seg: torch.Tensor | None = None,
     w: float = 1.0,
     strength: float = 0.5,
 ) -> tuple[torch.Tensor, torch.Tensor]:
@@ -94,7 +105,17 @@ def cyclenet_ddpm_loop(
         # -------------------------
         # Perform DDPM step
         # -------------------------
-        x_t = cyclenet_ddpm_step(model, x_t, t, src_idx, tgt_idx, c_img, sched, w)
+        x_t = cyclenet_ddpm_step(
+            model=model, 
+            x_t=x_t, 
+            t=t, 
+            src_idx=src_idx, 
+            tgt_idx=tgt_idx, 
+            c_img=c_img, 
+            seg=seg, 
+            sched=sched, 
+            w=w,
+        )
 
     return x_t, x_noise
 
@@ -109,6 +130,7 @@ def cyclenet_ddim_step(
     tgt_idx: torch.Tensor,
     c_img: torch.Tensor,
     sched: DiffusionSchedule,
+    seg: torch.Tensor | None = None,
     w: float = 1.0,
     eta: float = 0.0,
 ):
@@ -132,7 +154,16 @@ def cyclenet_ddim_step(
     # -------------------------
     # Classifier-Free Guidance: Predict noise
     # -------------------------
-    eps_pred = predict_cyclenet_cfg(model, x_t, t, src_idx, tgt_idx, c_img, w)
+    eps_pred = predict_cyclenet_cfg(
+        model=model, 
+        x_t=x_t, 
+        t=t, 
+        src_idx=src_idx, 
+        tgt_idx=tgt_idx, 
+        c_img=c_img, 
+        seg=seg, 
+        w=w,
+    )
 
     # -------------------------
     # Compute x_prev (prev DDIM step)
@@ -148,6 +179,7 @@ def cyclenet_ddim_loop(
     tgt_idx: torch.Tensor,
     c_img: torch.Tensor,
     sched: DiffusionSchedule,
+    seg: torch.Tensor | None = None,
     w: float = 1.0,
     strength: float = 0.5,
     num_steps: int = 100,
@@ -205,7 +237,17 @@ def cyclenet_ddim_loop(
         # Perform DDIM step
         # -------------------------
         x_t = cyclenet_ddim_step(
-            model, x_t, t, t_prev, src_idx, tgt_idx, c_img, sched, w, eta
+            model=model, 
+            x_t=x_t, 
+            t=t, 
+            t_prev=t_prev, 
+            src_idx=src_idx, 
+            tgt_idx=tgt_idx, 
+            c_img=c_img, 
+            seg=seg, 
+            sched=sched, 
+            w=w, 
+            eta=eta,
         )
 
     return x_t, x_noise
@@ -417,6 +459,7 @@ def predict_cyclenet_cfg(
     src_idx: torch.Tensor,
     tgt_idx: torch.Tensor,
     c_img: torch.Tensor,
+    seg: torch.Tensor | None = None,
     w: float = 1.0,
 ) -> torch.Tensor:
     """
@@ -439,20 +482,22 @@ def predict_cyclenet_cfg(
     # -------------------------
     # -- [Conditional]: UNet Backbone (target), ControlNet (source)
     eps_cond = model.forward(
-        x_t=x_t, 
+        x_t=x_t,
         t=t,
         from_idx=src_idx,
         to_idx=tgt_idx,
-        c_img=c_img
+        c_img=c_img,
+        seg=seg,
     )
 
     # -- [Unconditional]: UNet Backbone (source), ControlNet (source)
     eps_uncond = model.forward(
-        x_t=x_t, 
-        t=t, 
+        x_t=x_t,
+        t=t,
         from_idx=src_idx,
         to_idx=src_idx,
-        c_img=c_img
+        c_img=c_img,
+        seg=seg,
     )
 
     # -------------------------
@@ -462,7 +507,10 @@ def predict_cyclenet_cfg(
 
 
 def ddpm_x_prev_from_eps(
-    x_t: torch.Tensor, t: torch.Tensor, eps_pred: torch.Tensor, sched: DiffusionSchedule
+    x_t: torch.Tensor,
+    t: torch.Tensor,
+    eps_pred: torch.Tensor,
+    sched: DiffusionSchedule,
 ) -> torch.Tensor:
     """
     Computes the previous x_t-1 given the eps noise prediction
@@ -536,7 +584,10 @@ def ddim_x_prev_from_eps(
 
 
 def q_sample(
-    x_0: torch.Tensor, t: torch.Tensor, eps: torch.Tensor, sched: DiffusionSchedule
+    x_0: torch.Tensor,
+    t: torch.Tensor,
+    eps: torch.Tensor,
+    sched: DiffusionSchedule,
 ) -> torch.Tensor:
     """
     Computes forward q sample (x_t), noising the clean sample x0 to timestep t
@@ -555,7 +606,10 @@ def q_sample(
 
 
 def x0_from_eps(
-    x_t: torch.Tensor, t: torch.Tensor, eps_pred: torch.Tensor, sched: DiffusionSchedule
+    x_t: torch.Tensor,
+    t: torch.Tensor,
+    eps_pred: torch.Tensor,
+    sched: DiffusionSchedule,
 ) -> torch.Tensor:
     """
     Inverts the forward q sample equation to solve for x0 given the eps noise prediction
@@ -573,7 +627,10 @@ def x0_from_eps(
 
 
 def p_mean_variance(
-    x_t: torch.Tensor, t: torch.Tensor, eps_pred: torch.Tensor, sched: DiffusionSchedule
+    x_t: torch.Tensor,
+    t: torch.Tensor,
+    eps_pred: torch.Tensor,
+    sched: DiffusionSchedule,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """
 
@@ -625,7 +682,9 @@ def ddpm_steps_from_strength(sched: DiffusionSchedule, strength: float) -> list[
 
 
 def ddim_steps_from_strength(
-    sched: DiffusionSchedule, num_steps: int, strength: float
+    sched: DiffusionSchedule,
+    num_steps: int,
+    strength: float,
 ) -> list[int]:
     """
 

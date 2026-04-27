@@ -52,8 +52,8 @@ comparison:
 # Plotting
 # =========================
 plotting:
-  title: CLIP UMAP Projections Across CFG Values
-  axis_pad_frac: 0.15
+  title: DeepLabv3 UMAP Projections Across CFG Weights
+  axis_pad_frac: 0.2
 
   row_titles:
     clip: CLIP
@@ -63,11 +63,11 @@ plotting:
   titles:
     cfg_title_template: "$w = {cfg:g}$"
     cfg_label_template: "{cfg:g}"
-    summary_title: Translated Centroid Trajectory
+    summary_title: Trajectory
     show_panel_titles: false
     show_shared_column_titles: true
-    panel_fontsize: 11.0
-    column_title_fontsize: 11.0
+    panel_fontsize: 12.0
+    column_title_fontsize: 12.0
     column_title_pad: 0.008
     bottom_cfg_label_pad: 0.018
 
@@ -79,7 +79,7 @@ plotting:
     show_cfg_xlabel: true
     cfg_xlabel: "CFG weight ($w$)"
     cfg_xlabel_pad: 0.06
-    cfg_xlabel_fontsize: 16.0
+    cfg_xlabel_fontsize: 12.0
     show_bottom_xlabels: false
     show_left_ylabels: false
     show_summary_ylabels: false
@@ -89,8 +89,8 @@ plotting:
     global_ylabel: UMAP 2
     global_xlabel_y: 0.045
     global_ylabel_x: 0.045
-    global_xlabel_fontsize: 11.0
-    global_ylabel_fontsize: 11.0
+    global_xlabel_fontsize: 12.0
+    global_ylabel_fontsize: 12.0
 
   colors:
     sim: "#55A868"
@@ -98,9 +98,10 @@ plotting:
     translated: "#4C72B0"
 
   layout:
-    fig_width: 10.0
+    fig_width: 8.0
     fig_height: 6.0
     summary_width_ratio: 1.0
+    summary_gap_ratio: 0.25
     wspace: 0.03
     hspace: 0.04
     left: 0.10
@@ -108,9 +109,9 @@ plotting:
     top: 0.86
     bottom: 0.15
     title_y: 0.995
-    title_fontsize: 20.0
+    title_fontsize: 16.0
     row_label_x: -0.065
-    row_label_fontsize: 16.0
+    row_label_fontsize: 12.0
 
   panels:
     force_square: true
@@ -133,13 +134,13 @@ plotting:
     position: top_center
     reference: figure
     loc: upper center
-    top_y: 0.955
+    top_y: 0.90
     right_pad: 0.008
     overlap_pad_x: 0.006
     title_gap: 0.012
     headers_gap: 0.012
     ncol: 4
-    fontsize: 14.0
+    fontsize: 11.0
     frameon: false
 
   points:
@@ -147,6 +148,20 @@ plotting:
     rasterize_threshold: 3000
 
   reference:
+    points:
+      show: true
+      max_points_per_group: 1000
+      alpha: 0.1
+      size: 4.0
+    kde:
+      show: true
+      max_points_per_group: 1000
+      levels: 6
+      fill: false
+      alpha: 0.2
+      linewidth: 1.0
+
+  translated:
     points:
       show: true
       max_points_per_group: 1000
@@ -158,20 +173,6 @@ plotting:
       levels: 6
       fill: false
       alpha: 0.3
-      linewidth: 1.0
-
-  translated:
-    points:
-      show: true
-      max_points_per_group: 1000
-      alpha: 0.4
-      size: 4.0
-    kde:
-      show: true
-      max_points_per_group: 1000
-      levels: 6
-      fill: false
-      alpha: 0.5
       linewidth: 1.0
 
   marginals:
@@ -192,26 +193,28 @@ plotting:
   trajectory:
     color: "#4C72B0"
     alpha: 1.0
-    line_width: 1.2
+    line_width: 0.6
 
-    marker_size: 45.0
-    intermediate_marker_size: 18.0
-    start_marker_size: 40.0
-    end_marker_size: 52.0
+    marker_size: 8.0
+    intermediate_marker_size: 8.0
+    start_marker_size: 8.0
+    end_marker_size: 12.0
 
     marker: o
     start_marker: o
     end_marker: o
-    start_facecolor: white
+    start_facecolor: "#4C72B0"
     end_facecolor: "#4C72B0"
 
-    edgecolor: white
-    edgewidth: 0.8
+    edgecolor: none
+    edgewidth: 0.0
+    end_edgecolor: white
+    end_edgewidth: 0.8
 
     show_arrow: true
     arrow_on_last_segment_only: true
     arrowstyle: "-|>"
-    arrow_mutation_scale: 11.0
+    arrow_mutation_scale: 5.0
     arrow_linewidth: 1.0
     arrow_shrink_a: 0.0
     arrow_shrink_b: 0.0

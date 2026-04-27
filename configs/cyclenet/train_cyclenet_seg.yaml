@@ -2,7 +2,7 @@
 # Run
 # =========================
 run:
-  name: "oem_only_seg"
+  name: "oem_only_rgb_only_spade_coarse_skips"
   runs_dir: "/develop/code/runs/cyclenet/remote_sensing/seg"
 
   # -- UNet Backbone ckpt
@@ -28,11 +28,34 @@ model:
   cycle_weight: 0.01
   consis_weight: 0.1
   invar_weight: 0.1
-  invar_weight_start: 0.0
-  invar_weight_ramp_steps: 15000
-  invar_unet_grad: true
 
+  invar_weight_start: 0.1
+  invar_weight_ramp_steps: 0
+
+  invar_unet_grad: false
+
+  # -------------------------
+  # ControlNet Conditioning Config
+  # -- num_seg_classes: Number of segmentation mask class labels
+  # -- cond_mode: What input(s) to use for c_img
+  #     * rgb, seg, rgb_seg
+  # -- use_spade: Enable/disable SPADE segmentation mask modulation
+  # -- s_dim: SPADE block hidden dim
+  # -------------------------
   num_seg_classes: 8
+  cond_mode: seg
+  use_spade: true
+  s_dim: 128
+
+  # -------------------------
+  # ControlNet skip masks
+  # -- skip_block_mask: True for EncoderBlocks to use ControlNet skips from
+  #     * [256x256 (3), 128x128 (3), 64x64 (3), 32x32 (2)]
+  # -- use_mid_skip: True to use Bottleneck ControlNet skip
+  #     * 32x32 (1)
+  # -------------------------
+  skip_block_mask: [false, false, true, true]
+  use_mid_skip: true
 
 # =========================
 # Dataset

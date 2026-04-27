@@ -11,12 +11,12 @@ The repo supports two related workflows:
   adds a ControlNet-style side branch, and optimizes CycleNet reconstruction,
   cycle, consistency, and invariance losses.
 
-The codebase now has two CycleNet variants:
+The codebase now has two CycleNet entrypoint families:
 
 - RGB-conditioned CycleNet.
-- Segmentation-conditioned CycleNet, where ControlNet sees source RGB plus an
-  8-channel land-cover mask. This segmentation-conditioned path is the current
-  active remote-sensing workflow.
+- A segmentation-aware CycleNet path that can now run multiple conditioning
+  modes (`rgb`, `seg`, `rgb_seg`) with optional SPADE modulation. This
+  segmentation-aware path is the current active remote-sensing workflow.
 
 # Current goals
 
@@ -24,10 +24,19 @@ The codebase now has two CycleNet variants:
   land-cover geometry needed for downstream segmentation.
 - Use segmentation-aware conditioning as the main mechanism for stronger
   semantic consistency during CycleNet translation.
+- As of 2026-04-27, test whether SPADE segmentation modulation can preserve
+  semantic boundaries better than seg-only conditioning alone while still
+  allowing freer, more OEM-like translations.
 - Evaluate checkpoints and sampling settings with translate-sweep runs instead
   of selecting models only by ad hoc visual inspection.
 - Rank sweep candidates by realism metrics against a fixed real reference set,
   while keeping LPIPS and overlay visualizations as preservation guardrails.
+- Determine whether the translation model can be trained for the practical
+  deployment setting where only simulated segmentation masks are available at
+  inference time, even if most real training images do not have masks.
+- Treat "no usable real masks at training time" as a realistic target-domain
+  constraint for related low-altitude aerial imagery work, where real data can
+  be too low-quality for reliable pseudo-mask generation.
 
 As of 2026-04-17, the most important active path is the segmentation-aware
 pipeline built around:
@@ -61,15 +70,26 @@ pipeline built around:
 
 - `UNet` is the pretrained diffusion backbone used in both pretraining and
   CycleNet.
+- As of 2026-04-27, `UNet` also stores architectural metadata needed to
+  rebuild SPADE-capable ControlNets from a checkpointed backbone, including
+  `base_ch`, `t_dim`, `d_dim`, `ch_mults`, `num_res_blocks`, `enc_heads`, and
+  `mid_heads`.
 - `DomainEmbedding` is a learned 2-entry embedding table. The whole project is
   currently hard-coded around exactly two domains: sim=`0`, real=`1`.
 - `ControlNet` is created by deep-copying the pretrained UNet stem, encoder,
   bottleneck, and time MLP, then adding zero-initialized 1x1 control
   convolutions.
+- As of 2026-04-27, there are now two ControlNet builders:
+  - `ControlNet`: the previous copied-encoder control branch without SPADE.
+  - `SPADEControlNet`: a copied-encoder control branch whose residual blocks
+    use optional AdaGN + SPADE modulation and receive the raw segmentation map
+    separately for spatial modulation.
 - `CycleNet` combines:
   - source-domain embedding for the ControlNet branch
   - target-domain embedding for the backbone branch
   - ControlNet skips summed into the backbone bottleneck and decoder skips
+  - optional `seg` forwarding into the control branch so SPADE-enabled runs can
+    modulate each residual block with the source segmentation map
 
 ## Two-stage training pipeline
 
@@ -82,12 +102,17 @@ pipeline built around:
 2. CycleNet training:
    - Entrypoints:
      - RGB: `src/cyclenet/train_cyclenet.py`
-     - RGB+seg: `src/cyclenet/train_cyclenet_seg.py`
+     - segmentation-aware: `src/cyclenet/train_cyclenet_seg.py`
    - Loads the pretrained UNet EMA checkpoint as the CycleNet backbone.
    - Freezes the backbone stem, time MLP, encoder, bottleneck, and
      `DomainEmbedding`.
    - Trains ControlNet plus the UNet decoder/final layer.
    - Maintains a rank-0 EMA copy for evaluation/sampling.
+   - As of 2026-04-27, the segmentation-aware training path is config-driven
+     through:
+     - `model.cond_mode`: `rgb`, `seg`, or `rgb_seg`
+     - `model.use_spade`: whether to build `SPADEControlNet`
+     - `model.s_dim`: SPADE hidden width for the segmentation modulation towers
 
 ## Current default remote-sensing configs
 
@@ -144,6 +169,11 @@ are portable as-is.
 
 - Translation is implemented in `src/cyclenet/translate_cyclenet.py` and
   `src/cyclenet/translate_cyclenet_seg.py`.
+- As of 2026-04-25, there is also a segmentation-conditioned checkpoint/CFG/
+  strength sweep entrypoint at `src/cyclenet/translate_cyclenet_sweep_seg.py`,
+  mirroring the RGB sweep script but requiring `data.rgb_parent_dirs` and
+  `data.label_parent_dir` so source RGBs can be paired with segmentation
+  masks.
 - Both DDPM and DDIM are supported.
 - Translation starts by noising the source image according to
   `noise_strength`, then denoises toward the target domain.
@@ -152,12 +182,60 @@ are portable as-is.
   - unconditioned branch: `src -> src`
   - combined as `eps_uncond + w * (eps_cond - eps_uncond)`
 
-For segmentation runs, the control image is:
+As of 2026-04-27, segmentation-aware runs no longer hard-code one control
+image format. They now use `src/cyclenet/models/conditioning/spatial.py`:
 
-- `build_seg_condition(img, seg) = concat(normalized_rgb, one_hot_seg)`
+- `build_condition_input(img, seg, cond_mode)`
+- `build_seg_modulation_input(seg, use_spade)`
+- `control_in_channels(cond_mode, num_seg_classes)`
 
-This means the ControlNet sees `3 + num_seg_classes` channels, currently `11`
-for the default remote-sensing setup.
+Supported conditioning modes are:
+
+- `cond_mode: rgb`
+  - `c_img` is normalized RGB only
+  - useful for the original image-conditioned CycleNet behavior, and for
+    `rgb + SPADE(seg)` hybrids where RGB enters through ControlNet while the
+    segmentation map separately modulates the residual blocks
+- `cond_mode: seg`
+  - `c_img` is one-hot segmentation only
+  - useful for semantics-first translation and `seg-only + SPADE`
+- `cond_mode: rgb_seg`
+  - `c_img` is `concat(normalized_rgb, one_hot_seg)`
+  - useful for the earlier mixed conditioning setup and for hybrid
+    `rgb_seg + SPADE`
+
+SPADE functionality:
+
+- `use_spade: false`
+  - builds the standard `ControlNet`
+- `use_spade: true`
+  - builds `SPADEControlNet`
+  - forwards the original segmentation map separately as `seg`
+  - applies spatially adaptive modulation inside SPADE residual blocks using:
+    - global AdaGN domain modulation from `d_emb`
+    - spatial segmentation modulation from resized one-hot masks
+
+Default SPADE parameter:
+
+- `s_dim` is the hidden channel width of the shared segmentation towers inside
+  each SPADE site.
+- `s_dim=128` is the current default and matches the repo’s typical
+  `base_ch=128` and `d_dim=128`.
+
+Important interpretation:
+
+- `use_spade: true` with `cond_mode: seg` is a hybrid `seg feature injection +
+  seg modulation` design, not a pure modulation-only SPADE generator.
+- `use_spade: true` with `cond_mode: rgb` is the current cleanest way to test
+  `RGB conditioning + SPADE(seg)`, where RGB provides detail hints and the
+  segmentation map remains the spatial semantic controller.
+- As of 2026-04-27, the active SPADE ablations are based on the `oem_only`
+  pretrained UNet backbone and currently focus on:
+  - `cond_mode: seg`, `use_spade: true`
+  - `cond_mode: rgb`, `use_spade: true`
+  The working hypothesis is that SPADE may let the model add more realistic,
+  class-specific texture while reducing the boundary drift seen in earlier
+  seg-only ControlNet runs without SPADE.
 
 ## Evaluation workflow
 
@@ -188,6 +266,20 @@ for the default remote-sensing setup.
   be rasterized in PDF output while titles, lines, arrows, and other artists
   remain vectorized. This is useful for thesis figures where large point clouds
   can slow LaTeX/PDF rendering.
+- As of 2026-04-22, `src/cyclenet/eval/scripts/project_cfg_grid.py` also uses
+  `plotting.trajectory.edgecolor` for the start centroid marker. Previously the
+  start marker edge was hard-coded to the trajectory color, so YAML-only
+  changes could not fully disable trajectory marker outlines.
+- As of 2026-04-22, `src/cyclenet/eval/scripts/project_cfg_grid.py` supports
+  `plotting.trajectory.start_edgecolor` / `start_edgewidth` and
+  `end_edgecolor` / `end_edgewidth` overrides. The defaults still fall back to
+  the shared `edgecolor` / `edgewidth`, but the end centroid can now be styled
+  independently from the other trajectory markers.
+- As of 2026-04-22, `src/cyclenet/eval/scripts/project_cfg_grid.py` also
+  supports `plotting.layout.summary_gap_ratio`, which inserts an empty spacer
+  column before the trajectory summary so that gap can be widened without
+  changing inter-CFG spacing. The vertical summary separator remains centered
+  because it is computed from the rendered main-grid and summary-axis bounds.
 - `project_translated.py` now also fixes plot axis limits from the cached
   sim+real reference coordinates only, with optional padding via
   `plotting.axis_pad_frac`, so translated runs do not visually rescale the
@@ -195,6 +287,16 @@ for the default remote-sensing setup.
 - `project_translated.py` now skips embedder initialization entirely when the
   cached sim, real, and translated embedding `.npy` files already exist for
   the current run, making pure replotting much faster.
+- As of 2026-04-25, `scripts/analyze_class_feature_distances.py` supports
+  cross-class centroid analysis in addition to same-class reference
+  comparisons. It now writes long-form and matrix CSVs plus heatmaps for
+  comparison-class vs reference-class centroid L2/cosine distances, and when a
+  baseline dataset is configured it also writes delta-vs-baseline heatmaps to
+  highlight class drift such as movement toward buildings.
+- As of 2026-04-25, that same script also writes per-class alignment summary
+  CSVs and plots derived from the cross-class matrices, including nearest real
+  class, own-class rank, and own-vs-buildings / own-vs-water margins, plus
+  delta-vs-baseline versions to make class-attractor behavior easier to spot.
 - `analyze_translate_sweep_consensus.py` summarizes best settings across
   multiple sweep directories.
 - `project_translate_sweep_projections.py` adds PCA/t-SNE diagnostics.
@@ -205,6 +307,12 @@ for the default remote-sensing setup.
   `num_samples`, `n_rows`/`n_cols`, and horizontal/vertical panel spacing. It
   is intended for quick thesis/sample-figure assembly without rerunning any
   translation or projection workflow.
+- As of 2026-04-22, `src/cyclenet/eval/plotting/model_comparison.py` builds
+  thesis-style side-by-side comparison figures directly from saved
+  `source_samples/` and `translated_samples/` grid directories. Each model
+  column is a repeated `Input` / `Output` pair and can use its own fixed
+  `(noise_strength, cfg_weight)` setting, so cross-model visual comparisons do
+  not require every checkpoint to share the same selected operating point.
 - `scripts/plot_lpips_vs_fid_scatter.py` merges translation-sweep LPIPS and
   FID CSVs on `(step, noise_strength, cfg_weight)`, saves the merged table, and
   plots LPIPS-vs-FID tradeoff figures. As of 2026-04-21, the default figure
@@ -213,6 +321,36 @@ for the default remote-sensing setup.
   increasing CFG weight, an optional lower-left Pareto frontier, and optional
   highlighting of the best joint LPIPS/FID tradeoff point. It is intended for
   realism-vs-preservation tradeoff figures in the thesis workflow.
+- As of 2026-04-22, `src/cyclenet/eval/plotting/pareto.py` saves the 3D Pareto
+  scatter with manual subplot margins and disables the global tight save bbox
+  for that figure, because Matplotlib 3D export can clip the z-axis label when
+  combined with `tight_layout()` and `savefig.bbox="tight"`.
+- As of 2026-04-22, `src/cyclenet/eval/plotting/pareto.py` also writes a
+  staged selection figure for the `fid_deeplab_pareto_then_lpips` rule: a 3D
+  overview, a `FID` vs `DeepLab FD` Pareto-survivor panel, and a front-only
+  LPIPS strip that highlights the final lowest-LPIPS choice among survivors.
+  The plotting helper recomputes `is_pareto_fid_deeplab` and the staged
+  selected point from the merged metrics if those flags are absent in the CSV.
+  The story figure's 3D overview now labels the task-aware metric as
+  `DeepLabv3-FID`, uses `FID` as the vertical axis, and repositions that
+  vertical axis to the opposite edge via Matplotlib 3D axis `_axinfo`
+  juggling so the `FID` labels sit beside `DeepLabv3-FID` without changing the
+  overall viewing orientation; the story figure also inverts the LPIPS axis so
+  lower LPIPS visually decreases toward the center/good region. Because the
+  z-axis is manually repositioned, the story figure also forces the `FID`
+  z-label rotation to a fixed readable orientation. As of 2026-04-22,
+  `src/cyclenet/eval/plotting/pareto.py` exposes pairwise/3D/story title size,
+  legend size, title padding, and a manual story 3D title `y` offset directly
+  in `main()` so thesis-figure typography can be tuned without editing plotting
+  internals. Checkpoint legends/panel ordering are now also sorted by numeric
+  `step` rather than lexicographic `checkpoint_name`, so labels appear in the
+  expected order such as `2.5k, 10k, 20k, 30k`. The story figure now keeps
+  selected-point stars in the 3D and Pareto-front panels but only draws text
+  parameter annotations in the final LPIPS panel to reduce clutter.
+- As of 2026-04-22, `src/cyclenet/eval/plotting/pareto.py` also provides a
+  simple single-panel `plot_fid_lpips_tradeoff()` helper for clean
+  realism-vs-preservation plots. It keeps checkpoint colors and Pareto front
+  markers/lines but omits selected-point stars and text annotations.
 - `scripts/analyze_checkpoint_metrics.py` performs cross-checkpoint selection
   analysis given per-checkpoint LPIPS, FID, and DeepLab-FD CSVs. It merges the
   metrics on `(step, noise_strength, cfg_weight)`, computes Pareto-optimal
@@ -345,6 +483,11 @@ for the default remote-sensing setup.
   `data.reference_cache_dir` fixed across translated-dataset runs so sim/real
   embeddings and fitted PCA/UMAP projectors are reused; only translated
   embeddings should vary per output directory.
+- 2026-04-27: Treat "boundary faithfulness under freer translation" as a key
+  success criterion for segmentation-aware ControlNet experiments, not just
+  raw realism. Recent observations suggest seg-only conditioning without SPADE
+  can produce more OEM-like outputs than stricter RGB-conditioned runs, but it
+  also drifts further from the source layout as training progresses.
 
 ## Non-obvious implementation details worth remembering
 
@@ -360,6 +503,12 @@ for the default remote-sensing setup.
   frozen-teacher objective for the shared decoder/final layer. With
   `invar_unet_grad=true`, the invariance branch directly updates that trainable
   target-side path, which materially changes optimization behavior.
+- As of 2026-04-27, one important observed failure mode in downstream
+  segmentation experiments is apparent class collapse toward dominant-looking
+  real classes such as buildings and water. The current hypothesis is that
+  translated images sometimes place class-specific real textures onto the
+  wrong semantic regions, which can improve realism superficially while
+  harming class correctness.
 - `project_translated.py` intentionally reuses cached sim/real reference
   manifests, embeddings, and fitted projectors. Translated embeddings are
   cached per embedding model under `data.out_dir` as
@@ -458,6 +607,10 @@ for the default remote-sensing setup.
   environment-specific unless configs are edited first.
 - The segmentation path assumes mask values `0..8` with ignore=`0`; any new
   dataset with a different label encoding will need adapter work.
+- Some practical target domains may have no reliable real segmentation masks at
+  all, including pseudo-labels, so methods that depend on real-mask
+  conditioning should be treated as optional experiments rather than assumed
+  training requirements.
 - Because `DomainSampler` truncates to the smaller domain each epoch, very
   imbalanced datasets underuse the larger domain unless sampling strategy is
   revisited.
@@ -465,6 +618,12 @@ for the default remote-sensing setup.
   scores, especially at the smaller default sample counts.
 - Preservation can still regress even when realism metrics improve, so overlay
   checks and LPIPS should remain part of candidate selection.
+- Seg-only ControlNet conditioning without SPADE has recently looked more
+  realistic and more OEM-like than expected, but it may also reduce source
+  faithfulness and disturb semantic boundaries later in training.
+- If translated appearance drifts across class boundaries, downstream
+  segmentation models can collapse toward visually dominant classes such as
+  buildings or water even when the source mask geometry is correct.
 - Invariance loss has repeatedly shown a tendency to fall early and then rise
   later in training, including runs resumed from `20k` with larger invariance
   weight. This suggests the issue is not solved by weight increases alone and

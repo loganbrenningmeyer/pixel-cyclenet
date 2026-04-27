@@ -4,6 +4,7 @@ import torch.nn.functional as F
 from cyclenet.models import UNet, CycleNet
 from cyclenet.diffusion import DiffusionSchedule
 from cyclenet.diffusion import q_sample, x0_from_eps
+from cyclenet.models.conditioning import build_condition_input, build_seg_modulation_input
 
 
 # =========================
@@ -186,20 +187,6 @@ def cyclenet_loss(
 # =========================
 # CycleNet Loss ( Image + Segmentation mask conditioning )
 # =========================
-def build_seg_condition(img: torch.Tensor, seg: torch.Tensor) -> torch.Tensor:
-    """
-    Args:
-        img: (B, 3, H, W) in [-1, 1]
-        seg: (B, Cseg, H, W) in {0, 1}
-
-    Returns:
-        cond: (B, 3 + Cseg, H, W)
-    """
-    img_norm = ((img + 1.0) / 2.0).clamp(0.0, 1.0)
-    cond = torch.cat([img_norm, seg.float()], dim=1)    # (B, 3 + Cseg, H, W)
-    return cond
-
-
 def cyclenet_loss_seg(
     model: CycleNet,
     x_0: torch.Tensor,
@@ -208,6 +195,8 @@ def cyclenet_loss_seg(
     src_idx: torch.Tensor,
     tgt_idx: torch.Tensor,
     sched: DiffusionSchedule,
+    cond_mode: str,
+    use_spade: bool,
     invar_unet_grad: bool = False,
 ) -> dict[str, torch.Tensor]:
     """
@@ -237,7 +226,8 @@ def cyclenet_loss_seg(
     x_t = q_sample(x_0, t, eps_x, sched)
 
     # -- Build x_0 + seg_0 conditioning image
-    c_x0_seg = build_seg_condition(x_0, seg_0)
+    c_x0 = build_condition_input(x_0, seg_0, cond_mode)
+    seg_mod = build_seg_modulation_input(seg_0, use_spade)
 
     # -------------------------
     # Reconstruction Loss (x -> x)
@@ -249,7 +239,8 @@ def cyclenet_loss_seg(
         t=t, 
         from_idx=src_idx,
         to_idx=src_idx,
-        c_img=c_x0_seg,
+        c_img=c_x0,
+        seg=seg_mod,
     )
 
     recon_loss = F.mse_loss(eps_xt_x2x_x0, eps_x)
@@ -266,13 +257,14 @@ def cyclenet_loss_seg(
         t=t, 
         from_idx=src_idx,
         to_idx=tgt_idx,
-        c_img=c_x0_seg,
+        c_img=c_x0,
+        seg=seg_mod,
         enable_unet_grad=False,
     )
 
     # -- Predict clean y_0 / detached y_0 for c_img conditioning
     y_0 = x0_from_eps(x_t, t, eps_xt_x2y_x0, sched)
-    c_y0_seg = build_seg_condition(y_0.detach(), seg_0)
+    c_y0 = build_condition_input(y_0.detach(), seg_0, cond_mode)
 
     # -- Noise y_0 -> detached y_t / non-detached y_t_c
     eps_y = torch.randn_like(y_0)
@@ -286,7 +278,8 @@ def cyclenet_loss_seg(
         t=t,
         from_idx=tgt_idx,
         to_idx=src_idx,
-        c_img=c_y0_seg,
+        c_img=c_y0,
+        seg=seg_mod,
     )
 
     cycle_loss = F.mse_loss((eps_xt_x2y_x0.detach() + eps_yt_y2x_y0), (eps_x + eps_y))
@@ -301,7 +294,8 @@ def cyclenet_loss_seg(
         t=t,
         from_idx=src_idx,
         to_idx=src_idx,
-        c_img=c_x0_seg,
+        c_img=c_x0,
+        seg=seg_mod,
     )
 
     consis_loss = F.mse_loss((eps_xt_x2y_x0.detach() + eps_yt_x2x_x0), (eps_x + eps_y))
@@ -319,7 +313,8 @@ def cyclenet_loss_seg(
             t=t,
             from_idx=src_idx,
             to_idx=tgt_idx,
-            c_img=c_x0_seg,
+            c_img=c_x0,
+            seg=seg_mod,
             enable_unet_grad=True,
         )
     # -- If no U-Net grad, use previous no grad pass
@@ -332,7 +327,8 @@ def cyclenet_loss_seg(
             t=t,
             from_idx=tgt_idx,
             to_idx=tgt_idx,
-            c_img=c_y0_seg,
+            c_img=c_y0,
+            seg=seg_mod,
         )
 
     invar_loss = F.mse_loss(eps_xt_x2y_x0_invar, eps_xt_y2y_y0.detach())
