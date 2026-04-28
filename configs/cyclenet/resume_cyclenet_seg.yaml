@@ -1,0 +1,31 @@
+# =========================
+# Run
+# =========================
+run:
+  run_dir: /develop/code/runs/cyclenet/remote_sensing/seg/oem_only_seg_only_spade
+  ckpt_name: step-42500.ckpt
+  # -- Optional if changing loss weights on resume
+  # out_run_dir: /develop/code/runs/cyclenet/remote_sensing/all_real_ft_invar_ft_med_grad_low_consis
+
+# =========================
+# Training
+# =========================
+train:
+  total_steps: 50000
+
+# =========================
+# Model (optional resume-time overrides)
+# -- Loss weights (recon_weight, cycle_weight, consis_weight, invar_weight)
+# -- invar_unet_grad (bool): Enable/disable gradients in forward pass for invar loss
+# =========================
+model:
+  # recon_weight: 0.5
+  # cycle_weight: 0.01
+  # consis_weight: 0.02
+  # invar_weight: 0.1
+
+  # invar_unet_grad: true
+
+logging:
+  # ckpt_interval: 500
+  # sample_interval: 500

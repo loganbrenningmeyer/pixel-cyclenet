@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 
-from .controlnet import ControlNet
+from .controlnet import ControlNet, SPADEControlNet
 from .unet import UNet
 from .conditioning import DomainEmbedding, sinusoidal_embedding
 
@@ -10,7 +10,7 @@ class CycleNet(nn.Module):
     def __init__(
         self,
         backbone: UNet,
-        control: ControlNet,
+        control: ControlNet | SPADEControlNet,
         domain_emb: DomainEmbedding,
         t_dim: int = 512,
         d_dim: int = 128,

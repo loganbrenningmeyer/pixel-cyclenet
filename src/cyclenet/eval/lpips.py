@@ -163,73 +163,78 @@ def main() -> None:
     batch_size = 32
 
     # Directory containing the source sim images to compare.
-    sim_dir = "/develop/data/remote_sensing/tiled/projection/sim_proj"
+    sim_dir = "/develop/data/remote_sensing/tiled/projection/sim_proj/opt"
 
     # Single `step-{step}` directory whose `strength-{strength}/cfg-{cfg}` subdirectories
     # contain translated outputs to compare against the source sim images.
     # Example:
     # `/.../all_real_ft_invar/step-30000`
     # `/.../oem_only/ema/step-2500`
-    step_dir = Path("/cgi/data/nvesd/workspaces/logan/data/remote_sensing/tiled/projection/cyclenet_sim_proj/oem_only/ema/step-15000")
+    model_proj_dir = Path("/cgi/data/nvesd/workspaces/logan/data/remote_sensing/tiled/projection/cyclenet_sim_proj/seg/oem_only_seg_only/ema")
+    steps = [2500, 5000, 10000, 20000, 30000, 40000, 50000]
 
-    # CSV path where the aggregated per-setting LPIPS stats for this step will be saved.
-    csv_out_path = step_dir / "lpips_stats.csv"
-    summary_rows: list[dict[str, object]] = []
+    for step in steps:
 
-    if not sim_dir or not step_dir:
-        raise ValueError("Set sim_dir and step_dir in main() before running this script.")
+        step_dir = model_proj_dir / f"step-{step}"
 
-    for step, noise_strength, cfg_weight, translated_dir in iter_candidate_dirs(step_dir):
-        average_lpips, values, pairs = compute_average_lpips(
-            sim_dir=sim_dir,
-            translated_dir=translated_dir,
-            batch_size=batch_size,
-        )
+        # CSV path where the aggregated per-setting LPIPS stats for this step will be saved.
+        csv_out_path = step_dir / "lpips_stats.csv"
+        summary_rows: list[dict[str, object]] = []
 
-        print(
-            f"step-{step} / strength-{noise_strength:.1f} / cfg-{cfg_weight:.1f}".center(50, '=')
-        )
-        print(f"paired_images: {len(pairs)}")
-        print(f"[ Average LPIPS ]: {average_lpips:.6f}")
-        print(f"[ LPIPS STD     ]: {float(values.std()):.6f}")
+        if not sim_dir or not step_dir:
+            raise ValueError("Set sim_dir and step_dir in main() before running this script.")
 
-        summary_rows.append(
-            {
-                "step": step,
-                "noise_strength": noise_strength,
-                "cfg_weight": cfg_weight,
-                "translated_dir": str(translated_dir),
-                "paired_images": len(pairs),
-                "lpips_mean": average_lpips,
-                "lpips_std": float(values.std()),
-                "lpips_min": float(values.min()),
-                "lpips_max": float(values.max()),
-            }
-        )
+        for step, noise_strength, cfg_weight, translated_dir in iter_candidate_dirs(step_dir):
+            average_lpips, values, pairs = compute_average_lpips(
+                sim_dir=sim_dir,
+                translated_dir=translated_dir,
+                batch_size=batch_size,
+            )
 
-    if not summary_rows:
-        raise ValueError("No LPIPS stats were computed.")
+            print(
+                f"step-{step} / strength-{noise_strength:.1f} / cfg-{cfg_weight:.1f}".center(50, '=')
+            )
+            print(f"paired_images: {len(pairs)}")
+            print(f"[ Average LPIPS ]: {average_lpips:.6f}")
+            print(f"[ LPIPS STD     ]: {float(values.std()):.6f}")
 
-    csv_out_path.parent.mkdir(parents=True, exist_ok=True)
-    with csv_out_path.open("w", newline="") as handle:
-        writer = csv.DictWriter(
-            handle,
-            fieldnames=[
-                "step",
-                "noise_strength",
-                "cfg_weight",
-                "translated_dir",
-                "paired_images",
-                "lpips_mean",
-                "lpips_std",
-                "lpips_min",
-                "lpips_max",
-            ],
-        )
-        writer.writeheader()
-        writer.writerows(summary_rows)
+            summary_rows.append(
+                {
+                    "step": step,
+                    "noise_strength": noise_strength,
+                    "cfg_weight": cfg_weight,
+                    "translated_dir": str(translated_dir),
+                    "paired_images": len(pairs),
+                    "lpips_mean": average_lpips,
+                    "lpips_std": float(values.std()),
+                    "lpips_min": float(values.min()),
+                    "lpips_max": float(values.max()),
+                }
+            )
 
-    print(f"\nSaved LPIPS stats CSV to {csv_out_path}")
+        if not summary_rows:
+            raise ValueError("No LPIPS stats were computed.")
+
+        csv_out_path.parent.mkdir(parents=True, exist_ok=True)
+        with csv_out_path.open("w", newline="") as handle:
+            writer = csv.DictWriter(
+                handle,
+                fieldnames=[
+                    "step",
+                    "noise_strength",
+                    "cfg_weight",
+                    "translated_dir",
+                    "paired_images",
+                    "lpips_mean",
+                    "lpips_std",
+                    "lpips_min",
+                    "lpips_max",
+                ],
+            )
+            writer.writeheader()
+            writer.writerows(summary_rows)
+
+        print(f"\nSaved LPIPS stats CSV to {csv_out_path}")
 
 
 if __name__ == "__main__":

@@ -236,6 +236,12 @@ Important interpretation:
   The working hypothesis is that SPADE may let the model add more realistic,
   class-specific texture while reducing the boundary drift seen in earlier
   seg-only ControlNet runs without SPADE.
+- As of 2026-04-28, segmentation training sample visualizations use a shared
+  helper in `src/cyclenet/data/utils.py` to render source RGB images with
+  class-colored mask overlays and a legend driven by `sampling.class_names`
+  from `configs/cyclenet/train_cyclenet_seg.yaml`. `CycleNetTrainerSeg`
+  saves a four-column comparison for each sampled CFG / noise-strength pair:
+  `Source`, `Source + Mask`, `Translated`, and `Translated + Mask`.
 
 ## Evaluation workflow
 
@@ -394,6 +400,14 @@ Important interpretation:
   cache directory; it will compute or reuse `real_embed.npy`, cache
   `deeplab_translated_embed.npy` inside each `strength-* / cfg-*` directory,
   and write `deeplab_fd_stats.csv` inside the chosen `step-*` directory.
+- As of 2026-04-27, `src/cyclenet/eval/boundary_edge_align.py` provides a
+  source-mask-based structure-preservation metric for segmentation sweeps. It
+  pairs translated images with source segmentation masks by filename, builds a
+  boundary band from the source mask, computes Sobel edge magnitude on the
+  translated image, and writes per-candidate CSV stats such as
+  `boundary_edge_ratio` (higher is better) and
+  `boundary_edge_inverse_ratio` (lower is better) for use as admissibility or
+  tie-break metrics during checkpoint/CFG/strength selection.
 - `src/cyclenet/eval/frechet_dist.py` is now the shared helper for Fréchet
   distance over arbitrary cached embedding arrays and is used by the CLIP and
   DeepLab distribution-distance scripts.

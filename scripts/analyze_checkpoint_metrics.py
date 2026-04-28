@@ -10,6 +10,11 @@ MERGE_KEYS = ["step", "noise_strength", "cfg_weight"]
 REQUIRED_LPIPS_COLUMNS = set(MERGE_KEYS) | {"lpips_mean", "lpips_std"}
 REQUIRED_FID_COLUMNS = set(MERGE_KEYS) | {"fid"}
 REQUIRED_DEEPLAB_FD_COLUMNS = set(MERGE_KEYS) | {"deeplab_fd"}
+REQUIRED_BOUNDARY_ALIGN_COLUMNS = set(MERGE_KEYS) | {
+    "boundary_edge_ratio_mean",
+    "boundary_edge_inverse_ratio_mean",
+    "boundary_edge_contrast_mean",
+}
 
 
 def validate_columns(df: pd.DataFrame, required_columns: set[str], csv_label: str) -> None:
@@ -24,10 +29,14 @@ def load_checkpoint_metrics(
     lpips_csv_path: str | Path,
     fid_csv_path: str | Path,
     deeplab_fd_csv_path: str | Path,
+    boundary_align_csv_path: str | Path | None = None,
 ) -> pd.DataFrame:
     lpips_csv_path = Path(lpips_csv_path)
     fid_csv_path = Path(fid_csv_path)
     deeplab_fd_csv_path = Path(deeplab_fd_csv_path)
+    boundary_align_csv_path = (
+        Path(boundary_align_csv_path) if boundary_align_csv_path is not None else None
+    )
 
     for path, label in [
         (lpips_csv_path, "LPIPS"),
@@ -57,6 +66,30 @@ def load_checkpoint_metrics(
         how="inner",
         validate="one_to_one",
     )
+
+    if boundary_align_csv_path is not None:
+        if not boundary_align_csv_path.exists():
+            raise FileNotFoundError(f"Boundary align CSV does not exist: {boundary_align_csv_path}")
+        boundary_df = pd.read_csv(boundary_align_csv_path)
+        validate_columns(
+            boundary_df,
+            REQUIRED_BOUNDARY_ALIGN_COLUMNS,
+            csv_label="Boundary edge alignment stats",
+        )
+        merged = merged.merge(
+            boundary_df[
+                list(MERGE_KEYS)
+                + [
+                    "boundary_edge_ratio_mean",
+                    "boundary_edge_inverse_ratio_mean",
+                    "boundary_edge_contrast_mean",
+                ]
+            ],
+            on=MERGE_KEYS,
+            how="inner",
+            validate="one_to_one",
+        )
+
     if merged.empty:
         raise ValueError(
             f"No shared `(step, noise_strength, cfg_weight)` rows were found across "
@@ -93,6 +126,15 @@ def select_operating_point(
 ) -> pd.Series:
     mode = selection_mode.lower()
 
+    if mode == "fid_lpips_pareto_then_deeplab":
+        candidates = checkpoint_df.loc[checkpoint_df["is_pareto_fid_lpips"]].copy()
+        if candidates.empty:
+            raise ValueError("No FID/LPIPS Pareto candidates were found.")
+        return candidates.sort_values(
+            ["deeplab_fd", "fid", "lpips_mean", "noise_strength", "cfg_weight"],
+            ascending=[True, True, True, True, True],
+        ).iloc[0]
+
     if mode == "deeplab_lpips_pareto_then_fid":
         candidates = checkpoint_df.loc[checkpoint_df["is_pareto_deeplab_lpips"]].copy()
         if candidates.empty:
@@ -125,19 +167,86 @@ def select_operating_point(
 
     raise ValueError(
         f"Unsupported selection_mode '{selection_mode}'. "
-        "Expected 'deeplab_lpips_pareto_then_fid', 'three_metric_pareto_then_deeplab', "
-        "'fid_deeplab_pareto_then_lpips', or 'best_deeplab_fd'."
+        "Expected 'fid_lpips_pareto_then_deeplab', 'deeplab_lpips_pareto_then_fid', "
+        "'three_metric_pareto_then_deeplab', 'fid_deeplab_pareto_then_lpips', "
+        "or 'best_deeplab_fd'."
     )
+
+
+def filter_candidates(
+    df: pd.DataFrame,
+    max_lpips: float | None = None,
+    max_noise_strength: float | None = None,
+    min_boundary_edge_ratio: float | None = None,
+    max_boundary_edge_inverse_ratio: float | None = None,
+) -> pd.DataFrame:
+    filtered = df.copy()
+
+    if max_lpips is not None:
+        filtered = filtered.loc[filtered["lpips_mean"] <= max_lpips].copy()
+
+    if max_noise_strength is not None:
+        filtered = filtered.loc[filtered["noise_strength"] <= max_noise_strength].copy()
+
+    if min_boundary_edge_ratio is not None:
+        if "boundary_edge_ratio_mean" not in filtered.columns:
+            raise ValueError(
+                "min_boundary_edge_ratio was set, but boundary_edge_ratio_mean is not available. "
+                "Provide boundary_align_csv_path in checkpoint_specs."
+            )
+        filtered = filtered.loc[filtered["boundary_edge_ratio_mean"] >= min_boundary_edge_ratio].copy()
+
+    if max_boundary_edge_inverse_ratio is not None:
+        if "boundary_edge_inverse_ratio_mean" not in filtered.columns:
+            raise ValueError(
+                "max_boundary_edge_inverse_ratio was set, but boundary_edge_inverse_ratio_mean "
+                "is not available. Provide boundary_align_csv_path in checkpoint_specs."
+            )
+        filtered = filtered.loc[
+            filtered["boundary_edge_inverse_ratio_mean"] <= max_boundary_edge_inverse_ratio
+        ].copy()
+
+    if filtered.empty:
+        filters = []
+        if max_lpips is not None:
+            filters.append(f"lpips_mean <= {max_lpips}")
+        if max_noise_strength is not None:
+            filters.append(f"noise_strength <= {max_noise_strength}")
+        if min_boundary_edge_ratio is not None:
+            filters.append(f"boundary_edge_ratio_mean >= {min_boundary_edge_ratio}")
+        if max_boundary_edge_inverse_ratio is not None:
+            filters.append(
+                f"boundary_edge_inverse_ratio_mean <= {max_boundary_edge_inverse_ratio}"
+            )
+        filter_str = ", ".join(filters) if filters else "no filters"
+        raise ValueError(f"No candidates remain after applying filters: {filter_str}")
+
+    return filtered.reset_index(drop=True)
 
 
 def summarize_checkpoint(
     checkpoint_df: pd.DataFrame,
     selection_mode: str,
+    max_lpips: float | None = None,
+    max_noise_strength: float | None = None,
+    min_boundary_edge_ratio: float | None = None,
+    max_boundary_edge_inverse_ratio: float | None = None,
 ) -> tuple[dict[str, object], pd.DataFrame]:
-    checkpoint_df = checkpoint_df.copy()
+    original_count = int(len(checkpoint_df))
+    checkpoint_df = filter_candidates(
+        checkpoint_df,
+        max_lpips=max_lpips,
+        max_noise_strength=max_noise_strength,
+        min_boundary_edge_ratio=min_boundary_edge_ratio,
+        max_boundary_edge_inverse_ratio=max_boundary_edge_inverse_ratio,
+    )
     checkpoint_df["is_pareto_deeplab_lpips"] = compute_pareto_mask(
         checkpoint_df,
         ["deeplab_fd", "lpips_mean"],
+    )
+    checkpoint_df["is_pareto_fid_lpips"] = compute_pareto_mask(
+        checkpoint_df,
+        ["fid", "lpips_mean"],
     )
     checkpoint_df["is_pareto_fid_deeplab"] = compute_pareto_mask(
         checkpoint_df,
@@ -158,8 +267,14 @@ def summarize_checkpoint(
         "checkpoint_name": str(selected_row["checkpoint_name"]),
         "train_split": str(selected_row["train_split"]),
         "step": int(selected_row["step"]),
+        "n_settings_before_filter": original_count,
         "n_settings": int(len(checkpoint_df)),
+        "max_lpips": max_lpips,
+        "max_noise_strength": max_noise_strength,
+        "min_boundary_edge_ratio": min_boundary_edge_ratio,
+        "max_boundary_edge_inverse_ratio": max_boundary_edge_inverse_ratio,
         "pareto_deeplab_lpips_count": int(checkpoint_df["is_pareto_deeplab_lpips"].sum()),
+        "pareto_fid_lpips_count": int(checkpoint_df["is_pareto_fid_lpips"].sum()),
         "pareto_fid_deeplab_count": int(checkpoint_df["is_pareto_fid_deeplab"].sum()),
         "pareto_3d_count": int(checkpoint_df["is_pareto_3d"].sum()),
         "selection_mode": selection_mode,
@@ -184,47 +299,186 @@ def summarize_checkpoint(
         "selected_lpips": float(selected_row["lpips_mean"]),
         "selected_deeplab_fd": float(selected_row["deeplab_fd"]),
     }
+    if "boundary_edge_ratio_mean" in checkpoint_df.columns:
+        summary_row["best_boundary_edge_ratio"] = float(checkpoint_df["boundary_edge_ratio_mean"].max())
+        summary_row["best_boundary_edge_inverse_ratio"] = float(
+            checkpoint_df["boundary_edge_inverse_ratio_mean"].min()
+        )
+        summary_row["selected_boundary_edge_ratio"] = float(selected_row["boundary_edge_ratio_mean"])
+        summary_row["selected_boundary_edge_inverse_ratio"] = float(
+            selected_row["boundary_edge_inverse_ratio_mean"]
+        )
     return summary_row, checkpoint_df
+
+
+def summarize_candidate_pool(
+    candidate_df: pd.DataFrame,
+    selection_mode: str,
+    selection_scope: str,
+    max_lpips: float | None = None,
+    max_noise_strength: float | None = None,
+    min_boundary_edge_ratio: float | None = None,
+    max_boundary_edge_inverse_ratio: float | None = None,
+) -> tuple[dict[str, object], pd.DataFrame]:
+    original_count = int(len(candidate_df))
+    candidate_df = filter_candidates(
+        candidate_df,
+        max_lpips=max_lpips,
+        max_noise_strength=max_noise_strength,
+        min_boundary_edge_ratio=min_boundary_edge_ratio,
+        max_boundary_edge_inverse_ratio=max_boundary_edge_inverse_ratio,
+    )
+    candidate_df["is_pareto_deeplab_lpips"] = compute_pareto_mask(
+        candidate_df,
+        ["deeplab_fd", "lpips_mean"],
+    )
+    candidate_df["is_pareto_fid_lpips"] = compute_pareto_mask(
+        candidate_df,
+        ["fid", "lpips_mean"],
+    )
+    candidate_df["is_pareto_fid_deeplab"] = compute_pareto_mask(
+        candidate_df,
+        ["fid", "deeplab_fd"],
+    )
+    candidate_df["is_pareto_3d"] = compute_pareto_mask(
+        candidate_df,
+        ["fid", "lpips_mean", "deeplab_fd"],
+    )
+
+    best_fid_row = candidate_df.nsmallest(1, "fid").iloc[0]
+    best_deeplab_row = candidate_df.nsmallest(1, "deeplab_fd").iloc[0]
+    best_lpips_row = candidate_df.nsmallest(1, "lpips_mean").iloc[0]
+    selected_row = select_operating_point(candidate_df, selection_mode=selection_mode)
+    candidate_df["is_selected"] = candidate_df.index == selected_row.name
+
+    summary_row = {
+        "selection_scope": selection_scope,
+        "selected_checkpoint_name": str(selected_row["checkpoint_name"]),
+        "selected_train_split": str(selected_row["train_split"]),
+        "selected_step": int(selected_row["step"]),
+        "n_settings_before_filter": original_count,
+        "n_settings": int(len(candidate_df)),
+        "n_checkpoints": int(candidate_df["checkpoint_name"].nunique()),
+        "max_lpips": max_lpips,
+        "max_noise_strength": max_noise_strength,
+        "min_boundary_edge_ratio": min_boundary_edge_ratio,
+        "max_boundary_edge_inverse_ratio": max_boundary_edge_inverse_ratio,
+        "pareto_deeplab_lpips_count": int(candidate_df["is_pareto_deeplab_lpips"].sum()),
+        "pareto_fid_lpips_count": int(candidate_df["is_pareto_fid_lpips"].sum()),
+        "pareto_fid_deeplab_count": int(candidate_df["is_pareto_fid_deeplab"].sum()),
+        "pareto_3d_count": int(candidate_df["is_pareto_3d"].sum()),
+        "selection_mode": selection_mode,
+        "best_fid": float(best_fid_row["fid"]),
+        "best_fid_checkpoint_name": str(best_fid_row["checkpoint_name"]),
+        "best_fid_step": int(best_fid_row["step"]),
+        "best_fid_gamma": float(best_fid_row["noise_strength"]),
+        "best_fid_cfg_weight": float(best_fid_row["cfg_weight"]),
+        "best_fid_lpips": float(best_fid_row["lpips_mean"]),
+        "best_fid_deeplab_fd": float(best_fid_row["deeplab_fd"]),
+        "best_deeplab_fd": float(best_deeplab_row["deeplab_fd"]),
+        "best_deeplab_checkpoint_name": str(best_deeplab_row["checkpoint_name"]),
+        "best_deeplab_step": int(best_deeplab_row["step"]),
+        "best_deeplab_gamma": float(best_deeplab_row["noise_strength"]),
+        "best_deeplab_cfg_weight": float(best_deeplab_row["cfg_weight"]),
+        "best_deeplab_lpips": float(best_deeplab_row["lpips_mean"]),
+        "best_deeplab_fid": float(best_deeplab_row["fid"]),
+        "best_lpips": float(best_lpips_row["lpips_mean"]),
+        "best_lpips_checkpoint_name": str(best_lpips_row["checkpoint_name"]),
+        "best_lpips_step": int(best_lpips_row["step"]),
+        "best_lpips_gamma": float(best_lpips_row["noise_strength"]),
+        "best_lpips_cfg_weight": float(best_lpips_row["cfg_weight"]),
+        "best_lpips_fid": float(best_lpips_row["fid"]),
+        "best_lpips_deeplab_fd": float(best_lpips_row["deeplab_fd"]),
+        "selected_gamma": float(selected_row["noise_strength"]),
+        "selected_cfg_weight": float(selected_row["cfg_weight"]),
+        "selected_fid": float(selected_row["fid"]),
+        "selected_lpips": float(selected_row["lpips_mean"]),
+        "selected_deeplab_fd": float(selected_row["deeplab_fd"]),
+    }
+    if "boundary_edge_ratio_mean" in candidate_df.columns:
+        summary_row["best_boundary_edge_ratio"] = float(candidate_df["boundary_edge_ratio_mean"].max())
+        summary_row["best_boundary_edge_inverse_ratio"] = float(
+            candidate_df["boundary_edge_inverse_ratio_mean"].min()
+        )
+        summary_row["selected_boundary_edge_ratio"] = float(selected_row["boundary_edge_ratio_mean"])
+        summary_row["selected_boundary_edge_inverse_ratio"] = float(
+            selected_row["boundary_edge_inverse_ratio_mean"]
+        )
+    return summary_row, candidate_df
 
 
 def build_latex_summary_table(summary_df: pd.DataFrame, save_path: str | Path) -> None:
     save_path = Path(save_path)
     save_path.parent.mkdir(parents=True, exist_ok=True)
 
-    table_df = summary_df[
-        [
-            "checkpoint_name",
-            "train_split",
-            "best_fid",
-            "best_fid_gamma",
-            "best_fid_cfg_weight",
-            "best_deeplab_fd",
-            "best_deeplab_gamma",
-            "best_deeplab_cfg_weight",
-            "selected_gamma",
-            "selected_cfg_weight",
-            "selected_fid",
-            "selected_lpips",
-            "selected_deeplab_fd",
-        ]
-    ].copy()
-    table_df = table_df.rename(
-        columns={
-            "checkpoint_name": "Checkpoint",
-            "train_split": "Split",
-            "best_fid": "Best FID",
-            "best_fid_gamma": "Best FID $\\gamma$",
-            "best_fid_cfg_weight": "Best FID $w$",
-            "best_deeplab_fd": "Best DeepLab FD",
-            "best_deeplab_gamma": "Best DeepLab $\\gamma$",
-            "best_deeplab_cfg_weight": "Best DeepLab $w$",
-            "selected_gamma": "Selected $\\gamma$",
-            "selected_cfg_weight": "Selected $w$",
-            "selected_fid": "Selected FID",
-            "selected_lpips": "Selected LPIPS",
-            "selected_deeplab_fd": "Selected DeepLab FD",
-        }
-    )
+    if "checkpoint_name" in summary_df.columns:
+        table_df = summary_df[
+            [
+                "checkpoint_name",
+                "train_split",
+                "best_fid",
+                "best_fid_gamma",
+                "best_fid_cfg_weight",
+                "best_deeplab_fd",
+                "best_deeplab_gamma",
+                "best_deeplab_cfg_weight",
+                "selected_gamma",
+                "selected_cfg_weight",
+                "selected_fid",
+                "selected_lpips",
+                "selected_deeplab_fd",
+            ]
+        ].copy()
+        table_df = table_df.rename(
+            columns={
+                "checkpoint_name": "Checkpoint",
+                "train_split": "Split",
+                "best_fid": "Best FID",
+                "best_fid_gamma": "Best FID $\\gamma$",
+                "best_fid_cfg_weight": "Best FID $w$",
+                "best_deeplab_fd": "Best DeepLab FD",
+                "best_deeplab_gamma": "Best DeepLab $\\gamma$",
+                "best_deeplab_cfg_weight": "Best DeepLab $w$",
+                "selected_gamma": "Selected $\\gamma$",
+                "selected_cfg_weight": "Selected $w$",
+                "selected_fid": "Selected FID",
+                "selected_lpips": "Selected LPIPS",
+                "selected_deeplab_fd": "Selected DeepLab FD",
+            }
+        )
+    else:
+        table_df = summary_df[
+            [
+                "selection_scope",
+                "selected_checkpoint_name",
+                "selected_step",
+                "best_fid",
+                "best_fid_checkpoint_name",
+                "best_deeplab_fd",
+                "best_deeplab_checkpoint_name",
+                "selected_gamma",
+                "selected_cfg_weight",
+                "selected_fid",
+                "selected_lpips",
+                "selected_deeplab_fd",
+            ]
+        ].copy()
+        table_df = table_df.rename(
+            columns={
+                "selection_scope": "Scope",
+                "selected_checkpoint_name": "Selected Checkpoint",
+                "selected_step": "Selected Step",
+                "best_fid": "Best FID",
+                "best_fid_checkpoint_name": "Best FID Checkpoint",
+                "best_deeplab_fd": "Best DeepLab FD",
+                "best_deeplab_checkpoint_name": "Best DeepLab Checkpoint",
+                "selected_gamma": "Selected $\\gamma$",
+                "selected_cfg_weight": "Selected $w$",
+                "selected_fid": "Selected FID",
+                "selected_lpips": "Selected LPIPS",
+                "selected_deeplab_fd": "Selected DeepLab FD",
+            }
+        )
 
     latex = table_df.to_latex(
         index=False,
@@ -236,63 +490,122 @@ def build_latex_summary_table(summary_df: pd.DataFrame, save_path: str | Path) -
 
 def main() -> None:
     # Output directory for merged per-setting metrics and checkpoint summary tables.
-    out_dir = Path("/tmp/checkpoint_metric_analysis")
+    out_dir = Path("/develop/code/eval/checkpoints/fid_deeplab_oem_only_seg_only")
 
     # Operating-point selection rule:
+    # - `fid_lpips_pareto_then_deeplab`: realism/preservation first, then best
+    #   task-aware alignment among those candidates
     # - `deeplab_lpips_pareto_then_fid`: default segmentation-oriented rule
     # - `fid_deeplab_pareto_then_lpips`: realism/task-aware alignment first,
     #   then lowest preservation cost among those candidates
     # - `three_metric_pareto_then_deeplab`: stricter 3-metric non-dominated rule
     # - `best_deeplab_fd`: purely task-aware minimum
-    selection_mode = "deeplab_lpips_pareto_then_fid"
+    selection_mode = "fid_deeplab_pareto_then_lpips"
+
+    # Whether to compute Pareto fronts / final selections independently within
+    # each checkpoint or jointly across all tested checkpoints.
+    select_by_checkpoint = False
+
+    # Optional admissibility filters before Pareto selection.
+    # Set to `None` to disable a filter.
+    max_lpips = None
+    max_noise_strength = None
+    min_boundary_edge_ratio = None
+    max_boundary_edge_inverse_ratio = None
+
+
+    proj_dir = Path("/cgi/data/nvesd/workspaces/logan/data/remote_sensing/tiled/projection/cyclenet_sim_proj/seg/oem_only_seg_only/ema")
 
     # Per-checkpoint metric CSVs. Each entry should point at the LPIPS, FID, and
     # DeepLab FD CSVs produced from the same translated `step-*` directory.
     checkpoint_specs = [
         {
-            "checkpoint_name": "2.5k",
-            "train_split": "OEM only",
-            "lpips_csv_path": "/path/to/step-2500/lpips_stats.csv",
-            "fid_csv_path": "/path/to/step-2500/fid_stats.csv",
-            "deeplab_fd_csv_path": "/path/to/step-2500/deeplab_fd_stats.csv",
+            "checkpoint_name": "5k",
+            "train_split": "OEM only seg only",
+            "lpips_csv_path": proj_dir / "step-5000/lpips_stats.csv",
+            "fid_csv_path": proj_dir / "step-5000/fid_stats.csv",
+            "deeplab_fd_csv_path": proj_dir / "step-5000/deeplab_fd_stats.csv",
+            "boundary_align_csv_path": proj_dir / "step-5000/boundary_edge_align_stats.csv",
         },
         {
             "checkpoint_name": "10k",
-            "train_split": "All real",
-            "lpips_csv_path": "/path/to/step-10000/lpips_stats.csv",
-            "fid_csv_path": "/path/to/step-10000/fid_stats.csv",
-            "deeplab_fd_csv_path": "/path/to/step-10000/deeplab_fd_stats.csv",
+            "train_split": "OEM only seg only",
+            "lpips_csv_path": proj_dir / "step-10000/lpips_stats.csv",
+            "fid_csv_path": proj_dir / "step-10000/fid_stats.csv",
+            "deeplab_fd_csv_path": proj_dir / "step-10000/deeplab_fd_stats.csv",
+            "boundary_align_csv_path": proj_dir / "step-10000/boundary_edge_align_stats.csv",
         },
         {
             "checkpoint_name": "20k",
-            "train_split": "All real",
-            "lpips_csv_path": "/path/to/step-20000/lpips_stats.csv",
-            "fid_csv_path": "/path/to/step-20000/fid_stats.csv",
-            "deeplab_fd_csv_path": "/path/to/step-20000/deeplab_fd_stats.csv",
+            "train_split": "OEM only seg only",
+            "lpips_csv_path": proj_dir / "step-20000/lpips_stats.csv",
+            "fid_csv_path": proj_dir / "step-20000/fid_stats.csv",
+            "deeplab_fd_csv_path": proj_dir / "step-20000/deeplab_fd_stats.csv",
+            "boundary_align_csv_path": proj_dir / "step-20000/boundary_edge_align_stats.csv",
         },
         {
             "checkpoint_name": "30k",
-            "train_split": "All real",
-            "lpips_csv_path": "/path/to/step-30000/lpips_stats.csv",
-            "fid_csv_path": "/path/to/step-30000/fid_stats.csv",
-            "deeplab_fd_csv_path": "/path/to/step-30000/deeplab_fd_stats.csv",
+            "train_split": "OEM only seg only",
+            "lpips_csv_path": proj_dir / "step-30000/lpips_stats.csv",
+            "fid_csv_path": proj_dir / "step-30000/fid_stats.csv",
+            "deeplab_fd_csv_path": proj_dir / "step-30000/deeplab_fd_stats.csv",
+            "boundary_align_csv_path": proj_dir / "step-30000/boundary_edge_align_stats.csv",
+        },
+        {
+            "checkpoint_name": "40k",
+            "train_split": "OEM only seg only",
+            "lpips_csv_path": proj_dir / "step-40000/lpips_stats.csv",
+            "fid_csv_path": proj_dir / "step-40000/fid_stats.csv",
+            "deeplab_fd_csv_path": proj_dir / "step-40000/deeplab_fd_stats.csv",
+            "boundary_align_csv_path": proj_dir / "step-40000/boundary_edge_align_stats.csv",
+        },
+        {
+            "checkpoint_name": "50k",
+            "train_split": "OEM only seg only",
+            "lpips_csv_path": proj_dir / "step-50000/lpips_stats.csv",
+            "fid_csv_path": proj_dir / "step-50000/fid_stats.csv",
+            "deeplab_fd_csv_path": proj_dir / "step-50000/deeplab_fd_stats.csv",
+            "boundary_align_csv_path": proj_dir / "step-50000/boundary_edge_align_stats.csv",
         },
     ]
 
     merged_dfs: list[pd.DataFrame] = []
-    summary_rows: list[dict[str, object]] = []
 
     for spec in checkpoint_specs:
         checkpoint_df = load_checkpoint_metrics(**spec)
-        summary_row, annotated_df = summarize_checkpoint(
-            checkpoint_df=checkpoint_df,
-            selection_mode=selection_mode,
-        )
-        merged_dfs.append(annotated_df)
-        summary_rows.append(summary_row)
+        merged_dfs.append(checkpoint_df)
 
     all_metrics_df = pd.concat(merged_dfs, axis=0, ignore_index=True)
-    summary_df = pd.DataFrame(summary_rows).sort_values("step").reset_index(drop=True)
+
+    if select_by_checkpoint:
+        summary_rows: list[dict[str, object]] = []
+        annotated_dfs: list[pd.DataFrame] = []
+
+        for checkpoint_name, checkpoint_df in all_metrics_df.groupby("checkpoint_name", sort=False):
+            summary_row, annotated_df = summarize_checkpoint(
+                checkpoint_df=checkpoint_df.reset_index(drop=True),
+                selection_mode=selection_mode,
+                max_lpips=max_lpips,
+                max_noise_strength=max_noise_strength,
+                min_boundary_edge_ratio=min_boundary_edge_ratio,
+                max_boundary_edge_inverse_ratio=max_boundary_edge_inverse_ratio,
+            )
+            summary_rows.append(summary_row)
+            annotated_dfs.append(annotated_df)
+
+        all_metrics_df = pd.concat(annotated_dfs, axis=0, ignore_index=True)
+        summary_df = pd.DataFrame(summary_rows).sort_values("step").reset_index(drop=True)
+    else:
+        summary_row, all_metrics_df = summarize_candidate_pool(
+            candidate_df=all_metrics_df,
+            selection_mode=selection_mode,
+            selection_scope="overall",
+            max_lpips=max_lpips,
+            max_noise_strength=max_noise_strength,
+            min_boundary_edge_ratio=min_boundary_edge_ratio,
+            max_boundary_edge_inverse_ratio=max_boundary_edge_inverse_ratio,
+        )
+        summary_df = pd.DataFrame([summary_row])
 
     out_dir.mkdir(parents=True, exist_ok=True)
     merged_csv_path = out_dir / "checkpoint_metrics_merged.csv"

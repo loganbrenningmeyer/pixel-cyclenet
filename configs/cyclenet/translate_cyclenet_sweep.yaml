@@ -2,7 +2,7 @@
 # Run
 # =========================
 run:
-  run_dir: /develop/code/runs/cyclenet/remote_sensing/all_real
+  run_dir: /develop/code/runs/cyclenet/remote_sensing/oem_only
   model_key: ema_model
 
 # =========================
@@ -16,23 +16,23 @@ data:
   # -- Optional dataset sharding across independent translation runs.
   # -- For two concurrent runs, set num_shards: 2 in both configs and use
   # -- shard_index: 0 for the first run and shard_index: 1 for the second.
-  num_shards: 2
-  shard_index: 1
+  # num_shards: 2
+  # shard_index: 1
 
-  rgb_parent_dirs: null
-    # - opt
+  rgb_parent_dirs: 
+    - opt
 
   # If out_dir_template is omitted, outputs are written under data.out_dir /
   # step-..._strength-..._cfg-...
   # out_dir: /develop/data/remote_sensing/tiled/projection/cyclenet_sim_proj/all_real
-  out_dir_template: /develop/data/remote_sensing/tiled/projection/cyclenet_sim_proj/all_real/ema/step-{step}/strength-{strength}/cfg-{cfg}
+  out_dir_template: /develop/data/remote_sensing/tiled/projection/cyclenet_sim_proj/oem_only/ema/step-{step}/strength-{strength}/cfg-{cfg}
   image_size: 256
 
 # =========================
 # Sweep
 # =========================
 sweep:
-  steps: [5000]
+  steps: [50000]
   cfg_weights: [1.0, 2.0, 3.0, 4.0, 5.0]
   noise_strengths: [0.1, 0.2, 0.3, 0.4, 0.5]
 

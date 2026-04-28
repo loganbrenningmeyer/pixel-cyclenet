@@ -83,6 +83,19 @@ class ControlNet(nn.Module):
             
         self.use_mid_skip = use_mid_skip
 
+        # -- Freeze masked skip heads
+        for use_block_skip, zero_conv_block in zip(
+            self.skip_block_mask,
+            self.encoder_zero_convs,
+        ):
+            if not use_block_skip:
+                for p in zero_conv_block.parameters():
+                    p.requires_grad_(False)
+        
+        if not self.use_mid_skip:
+            for p in self.mid_zero_conv.parameters():
+                p.requires_grad_(False)
+
     def forward(
         self,
         x: torch.Tensor,
@@ -249,6 +262,19 @@ class SPADEControlNet(nn.Module):
             )
             
         self.use_mid_skip = use_mid_skip
+
+        # -- Freeze masked skip heads
+        for use_block_skip, zero_conv_block in zip(
+            self.skip_block_mask,
+            self.encoder_zero_convs,
+        ):
+            if not use_block_skip:
+                for p in zero_conv_block.parameters():
+                    p.requires_grad_(False)
+        
+        if not self.use_mid_skip:
+            for p in self.mid_zero_conv.parameters():
+                p.requires_grad_(False)
 
         # -------------------------
         # Copy backbone weights

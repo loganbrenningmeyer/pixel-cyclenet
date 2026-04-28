@@ -11,6 +11,7 @@ from tqdm import tqdm
 from collections import deque
 
 from cyclenet.models import CycleNet
+from cyclenet.data import render_segmentation_overlay_comparison
 from cyclenet.models.conditioning import build_condition_input, build_seg_modulation_input
 from cyclenet.models.utils import unwrap
 from cyclenet.diffusion import DiffusionSchedule, cyclenet_ddpm_loop, cyclenet_ddim_loop
@@ -60,15 +61,28 @@ class CycleNetTrainerSeg:
         self.consis_weight = model_config.consis_weight
         self.invar_weight = model_config.invar_weight
         self.invar_weight_start = float(
-            OmegaConf.select(model_config, "invar_weight_start", self.invar_weight)
+            OmegaConf.select(model_config, "invar_weight_start", default=self.invar_weight)
         )
         self.invar_weight_ramp_steps = int(
-            OmegaConf.select(model_config, "invar_weight_ramp_steps", 0)
+            OmegaConf.select(model_config, "invar_weight_ramp_steps", default=0)
         )
 
         # -- Conditioning mode / SPADE modulation
         self.cond_mode = model_config.cond_mode
         self.use_spade = model_config.use_spade
+        self.num_seg_classes = int(model_config.num_seg_classes)
+        self.class_names = list(
+            OmegaConf.select(
+                sample_config,
+                "class_names",
+                default=[f"class_{idx + 1}" for idx in range(self.num_seg_classes)],
+            )
+        )
+        if len(self.class_names) != self.num_seg_classes:
+            raise ValueError(
+                f"sampling.class_names length ({len(self.class_names)}) must match "
+                f"model.num_seg_classes ({self.num_seg_classes})."
+            )
 
         # -- Track running averages of losses
         self._raw_recon_hist = deque(maxlen=100)
@@ -386,6 +400,19 @@ class CycleNetTrainerSeg:
 
                     ema_grid = self.save_samples(ema_samples, out_dir / "ema.png")
                     self.writer.add_image(f"figs/ema/{strength_str}_{cfg_str}", ema_grid, step)
+
+                    comparison = render_segmentation_overlay_comparison(
+                        source_images=x_src,
+                        seg_masks=seg_src,
+                        translated_images=ema_samples,
+                        class_names=self.class_names,
+                        out_path=out_dir / "comparison.png",
+                    )
+                    self.writer.add_image(
+                        f"figs/overlay_compare/{strength_str}_{cfg_str}",
+                        comparison,
+                        step,
+                    )
 
             # -------------------------
             # Save / log noised source images

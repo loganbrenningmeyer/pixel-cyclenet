@@ -113,7 +113,7 @@ def load_or_compute_embeddings(
 
 def main() -> None:
     # DeepLab checkpoint used to build the task-aware embedding space.
-    deeplab_ckpt_path = Path("/path/to/deeplab.ckpt")
+    deeplab_ckpt_path = Path("/cgi/data/nvesd/workspaces/logan/code/land_mapping/runs/deeplab/oem_subset/real-sim/training/checkpoints/step-50000.ckpt")
 
     # DeepLab feature layer used for embedding extraction. `prelogits` is the
     # intended task-aware default for Fréchet-distance comparison.
@@ -125,104 +125,109 @@ def main() -> None:
     # Directory containing the real images used as the reference distribution.
     # This is only needed when `reference_cache_dir / real_embed.npy` does not
     # already exist.
-    real_dir = Path("/path/to/real_images")
+    real_dir = Path("/cgi/data/nvesd/workspaces/logan/data/remote_sensing/tiled/projection/oem_proj")
 
     # Cache directory for DeepLab reference embeddings. If `real_embed.npy`
     # already exists here, the script will reuse it instead of recomputing.
     # A natural location is:
     # `/.../project_translated/reference_cache/deeplab`
-    reference_cache_dir = Path("/path/to/reference_cache/deeplab")
+    reference_cache_dir = Path("/cgi/data/nvesd/workspaces/logan/data/eval/cyclenet/remote_sensing/project_translated/reference_cache/deeplab")
+
+    # Filename used to cache translated DeepLab embeddings inside each
+    # `strength-{strength}/cfg-{cfg}` directory.
+    translated_embed_filename = "deeplab_translated_embed.npy"
 
     # Single `step-{step}` directory whose `strength-{strength}/cfg-{cfg}`
     # subdirectories contain translated image outputs.
     # Example:
     # `/.../all_real_ft_invar/step-30000`
     # `/.../oem_only/ema/step-2500`
-    step_dir = Path("/path/to/translated_outputs/step-30000")
+    model_proj_dir = Path("/cgi/data/nvesd/workspaces/logan/data/remote_sensing/tiled/projection/cyclenet_sim_proj/seg/oem_only_seg_only/ema")
+    steps = [2500, 5000, 10000, 20000, 30000, 40000, 50000]
 
-    # Filename used to cache translated DeepLab embeddings inside each
-    # `strength-{strength}/cfg-{cfg}` directory.
-    translated_embed_filename = "deeplab_translated_embed.npy"
+    for step in steps:
 
-    # CSV path where the aggregated DeepLab Fréchet stats for this step will be saved.
-    csv_out_path = step_dir / "deeplab_fd_stats.csv"
+        step_dir = model_proj_dir / f"step-{step}"
 
-    if not deeplab_ckpt_path.exists():
-        raise FileNotFoundError(f"DeepLab checkpoint does not exist: {deeplab_ckpt_path}")
+        # CSV path where the aggregated DeepLab Fréchet stats for this step will be saved.
+        csv_out_path = step_dir / "deeplab_fd_stats.csv"
 
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    embedder = DeepLabEmbedder(
-        ckpt_path=deeplab_ckpt_path,
-        feature_layer=feature_layer,
-        device=device,
-    )
+        if not deeplab_ckpt_path.exists():
+            raise FileNotFoundError(f"DeepLab checkpoint does not exist: {deeplab_ckpt_path}")
 
-    reference_cache_dir.mkdir(parents=True, exist_ok=True)
-    real_embed_path = reference_cache_dir / "real_embed.npy"
-    real_feats = load_or_compute_embeddings(
-        embedder=embedder,
-        img_root=real_dir,
-        batch_size=batch_size,
-        cache_path=real_embed_path,
-    )
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        embedder = DeepLabEmbedder(
+            ckpt_path=deeplab_ckpt_path,
+            feature_layer=feature_layer,
+            device=device,
+        )
 
-    summary_rows: list[dict[str, object]] = []
-    for step, noise_strength, cfg_weight, translated_dir in iter_candidate_dirs(step_dir):
-        translated_embed_path = translated_dir / translated_embed_filename
-        translated_feats = load_or_compute_embeddings(
+        reference_cache_dir.mkdir(parents=True, exist_ok=True)
+        real_embed_path = reference_cache_dir / "real_embed.npy"
+        real_feats = load_or_compute_embeddings(
             embedder=embedder,
-            img_root=translated_dir,
+            img_root=real_dir,
             batch_size=batch_size,
-            cache_path=translated_embed_path,
-        )
-        deeplab_fd = frechet_distance(translated_feats, real_feats)
-
-        print(
-            f"step-{step} / strength-{noise_strength:.1f} / cfg-{cfg_weight:.1f}".center(50, "=")
-        )
-        print(f"[ DeepLab FD ]: {deeplab_fd:.6f}")
-
-        summary_rows.append(
-            {
-                "step": step,
-                "noise_strength": noise_strength,
-                "cfg_weight": cfg_weight,
-                "translated_dir": str(translated_dir),
-                "translated_embed_path": str(translated_embed_path),
-                "reference_embed_path": str(real_embed_path),
-                "feature_layer": feature_layer,
-                "n_reference": int(real_feats.shape[0]),
-                "n_translated": int(translated_feats.shape[0]),
-                "feature_dim": int(real_feats.shape[1]),
-                "deeplab_fd": deeplab_fd,
-            }
+            cache_path=real_embed_path,
         )
 
-    if not summary_rows:
-        raise ValueError("No DeepLab Fréchet stats were computed.")
+        summary_rows: list[dict[str, object]] = []
+        for step, noise_strength, cfg_weight, translated_dir in iter_candidate_dirs(step_dir):
+            translated_embed_path = translated_dir / translated_embed_filename
+            translated_feats = load_or_compute_embeddings(
+                embedder=embedder,
+                img_root=translated_dir,
+                batch_size=batch_size,
+                cache_path=translated_embed_path,
+            )
+            deeplab_fd = frechet_distance(translated_feats, real_feats)
 
-    csv_out_path.parent.mkdir(parents=True, exist_ok=True)
-    with csv_out_path.open("w", newline="") as handle:
-        writer = csv.DictWriter(
-            handle,
-            fieldnames=[
-                "step",
-                "noise_strength",
-                "cfg_weight",
-                "translated_dir",
-                "translated_embed_path",
-                "reference_embed_path",
-                "feature_layer",
-                "n_reference",
-                "n_translated",
-                "feature_dim",
-                "deeplab_fd",
-            ],
-        )
-        writer.writeheader()
-        writer.writerows(summary_rows)
+            print(
+                f"step-{step} / strength-{noise_strength:.1f} / cfg-{cfg_weight:.1f}".center(50, "=")
+            )
+            print(f"[ DeepLab FD ]: {deeplab_fd:.6f}")
 
-    print(f"\nSaved DeepLab Fréchet stats CSV to {csv_out_path}")
+            summary_rows.append(
+                {
+                    "step": step,
+                    "noise_strength": noise_strength,
+                    "cfg_weight": cfg_weight,
+                    "translated_dir": str(translated_dir),
+                    "translated_embed_path": str(translated_embed_path),
+                    "reference_embed_path": str(real_embed_path),
+                    "feature_layer": feature_layer,
+                    "n_reference": int(real_feats.shape[0]),
+                    "n_translated": int(translated_feats.shape[0]),
+                    "feature_dim": int(real_feats.shape[1]),
+                    "deeplab_fd": deeplab_fd,
+                }
+            )
+
+        if not summary_rows:
+            raise ValueError("No DeepLab Fréchet stats were computed.")
+
+        csv_out_path.parent.mkdir(parents=True, exist_ok=True)
+        with csv_out_path.open("w", newline="") as handle:
+            writer = csv.DictWriter(
+                handle,
+                fieldnames=[
+                    "step",
+                    "noise_strength",
+                    "cfg_weight",
+                    "translated_dir",
+                    "translated_embed_path",
+                    "reference_embed_path",
+                    "feature_layer",
+                    "n_reference",
+                    "n_translated",
+                    "feature_dim",
+                    "deeplab_fd",
+                ],
+            )
+            writer.writeheader()
+            writer.writerows(summary_rows)
+
+        print(f"\nSaved DeepLab Fréchet stats CSV to {csv_out_path}")
 
 
 if __name__ == "__main__":

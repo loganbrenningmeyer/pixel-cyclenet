@@ -134,10 +134,14 @@ class FIDComputer:
 
 
 def main() -> None:
+    
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    fid_computer = FIDComputer(device)
+
     # Mode for the experiment.
     # - `translated_step_vs_reference`: evaluate one translated `step-*` sweep against a reference dataset
     # - `direct_pair`: compute a one-off baseline such as `sim vs real`
-    mode = "translated_step_vs_reference"
+    mode_name = "translated_step_vs_reference"
 
     # Directory containing the reference images.
     # For your main experiments this is typically the real dataset.
@@ -151,56 +155,56 @@ def main() -> None:
     # Example:
     # `/.../all_real_ft_invar/step-30000`
     # `/.../oem_only/ema/step-2500`
-    step_dir = Path("/cgi/data/nvesd/workspaces/logan/data/remote_sensing/tiled/projection/cyclenet_sim_proj/oem_only/ema/step-30000")
+    if mode_name == "translated_step_vs_reference":
 
-    # CSV path where the aggregated per-setting FID stats for this step will be saved.
-    sweep_csv_out_path = step_dir / "fid_stats.csv"
+        model_proj_dir = Path("/cgi/data/nvesd/workspaces/logan/data/remote_sensing/tiled/projection/cyclenet_sim_proj/seg/oem_only_seg_only/ema")
+        steps = [5000, 10000, 20000, 30000, 40000, 50000]
+
+        for step in steps:
+
+            step_dir = model_proj_dir / f"step-{step}"
+
+            # CSV path where the aggregated per-setting FID stats for this step will be saved.
+            sweep_csv_out_path = step_dir / "fid_stats.csv"
+
+            if not reference_dir or not step_dir:
+                raise ValueError(
+                    "Set reference_dir and step_dir in main() for `translated_step_vs_reference` mode."
+                )
+
+            summary_rows: list[dict[str, object]] = []
+            for step, noise_strength, cfg_weight, translated_dir in iter_candidate_dirs(step_dir):
+                fid = fid_computer.compute(reference_dir, translated_dir)
+
+                print(
+                    f"step-{step} / strength-{noise_strength:.1f} / cfg-{cfg_weight:.1f}".center(50, "=")
+                )
+                print(f"[ FID ]: {fid:.6f}")
+
+                summary_rows.append(
+                    {
+                        "mode": mode_name,
+                        "reference_dir": str(reference_dir),
+                        "step": step,
+                        "noise_strength": noise_strength,
+                        "cfg_weight": cfg_weight,
+                        "translated_dir": str(translated_dir),
+                        "fid": fid,
+                    }
+                )
+
+            write_rows_to_csv(summary_rows, sweep_csv_out_path)
+            print(f"\nSaved FID stats CSV to {sweep_csv_out_path}")
 
     # -------------------------
     # Direct-pair mode: one baseline dataset pair
     # -------------------------
-    # First dataset in a direct baseline comparison. For example, simulated images.
-    direct_fake_dir = "/cgi/data/nvesd/workspaces/logan/data/remote_sensing/tiled/projection/sim_proj"
+    elif mode_name == "direct_pair":
+        # First dataset in a direct baseline comparison. For example, simulated images.
+        direct_fake_dir = "/cgi/data/nvesd/workspaces/logan/data/remote_sensing/tiled/projection/sim_proj"
+        # CSV path for the one-off direct baseline result, for example `sim vs real`.
+        direct_csv_out_path = Path("/cgi/data/nvesd/workspaces/logan/data/remote_sensing/tiled/projection/fid_baselines/sim_vs_real_fid.csv")
 
-    # CSV path for the one-off direct baseline result, for example `sim vs real`.
-    direct_csv_out_path = Path("/cgi/data/nvesd/workspaces/logan/data/remote_sensing/tiled/projection/fid_baselines/sim_vs_real_fid.csv")
-
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    fid_computer = FIDComputer(device)
-    mode_name = mode.lower()
-
-    if mode_name == "translated_step_vs_reference":
-        if not reference_dir or not step_dir:
-            raise ValueError(
-                "Set reference_dir and step_dir in main() for `translated_step_vs_reference` mode."
-            )
-
-        summary_rows: list[dict[str, object]] = []
-        for step, noise_strength, cfg_weight, translated_dir in iter_candidate_dirs(step_dir):
-            fid = fid_computer.compute(reference_dir, translated_dir)
-
-            print(
-                f"step-{step} / strength-{noise_strength:.1f} / cfg-{cfg_weight:.1f}".center(50, "=")
-            )
-            print(f"[ FID ]: {fid:.6f}")
-
-            summary_rows.append(
-                {
-                    "mode": mode_name,
-                    "reference_dir": str(reference_dir),
-                    "step": step,
-                    "noise_strength": noise_strength,
-                    "cfg_weight": cfg_weight,
-                    "translated_dir": str(translated_dir),
-                    "fid": fid,
-                }
-            )
-
-        write_rows_to_csv(summary_rows, sweep_csv_out_path)
-        print(f"\nSaved FID stats CSV to {sweep_csv_out_path}")
-        return
-
-    if mode_name == "direct_pair":
         if not reference_dir or not direct_fake_dir:
             raise ValueError(
                 "Set reference_dir and direct_fake_dir in main() for `direct_pair` mode."
@@ -220,10 +224,15 @@ def main() -> None:
         write_rows_to_csv(rows, direct_csv_out_path)
         print(f"\nSaved direct-pair FID CSV to {direct_csv_out_path}")
         return
+    
 
-    raise ValueError(
-        f"Unsupported mode '{mode}'. Expected 'translated_step_vs_reference' or 'direct_pair'."
-    )
+    else:
+        raise ValueError(
+            f"Unsupported mode '{mode_name}'. Expected 'translated_step_vs_reference' or 'direct_pair'."
+        )
+
+
+
 
 
 if __name__ == "__main__":

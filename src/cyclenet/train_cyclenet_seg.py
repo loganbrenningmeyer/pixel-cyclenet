@@ -199,13 +199,17 @@ def main():
 
     sample_loader = None
     if is_main:
+        sample_gen = torch.Generator()
+        sample_gen.manual_seed(seed + 10_000)
+
         sample_loader = DataLoader(
             sample_dataset,
             batch_size=config.sampling.num_samples,
             shuffle=True,
+            generator=sample_gen,
             num_workers=2,
             pin_memory=True,
-            drop_last=True
+            drop_last=True,
         )
 
     # -------------------------

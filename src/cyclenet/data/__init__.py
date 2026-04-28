@@ -9,6 +9,7 @@ from .dataset import (
 )
 from .sampler import DomainSampler
 from .transforms import load_unet_transforms, load_cyclenet_transforms, load_source_transforms
+from .utils import overlay_segmentation_mask, render_segmentation_overlay_comparison
 
 __all__ = [
     "DomainDataset",
@@ -22,4 +23,6 @@ __all__ = [
     "load_unet_transforms",
     "load_cyclenet_transforms",
     "load_source_transforms",
+    "overlay_segmentation_mask",
+    "render_segmentation_overlay_comparison",
 ]

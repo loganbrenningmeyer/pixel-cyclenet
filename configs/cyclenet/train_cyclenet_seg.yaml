@@ -43,7 +43,7 @@ model:
   # -- s_dim: SPADE block hidden dim
   # -------------------------
   num_seg_classes: 8
-  cond_mode: seg
+  cond_mode: rgb
   use_spade: true
   s_dim: 128
 
@@ -87,7 +87,20 @@ sampling:
   sampler: ddim
   ddim_steps: 50
   eta: 0
+
   # -- cfg_weights: Classifier free guidance weights for inference
   cfg_weights: [1.0, 2.0, 3.0, 4.0, 5.0]
   # -- noise_strengths: Different proportions of total DDPM timesteps to noise to for sampling
   noise_strengths: [0.1, 0.2, 0.3, 0.4, 0.5]
+
+  # -- Segmentation class names for plotting
+  class_names: [
+    "bareland",
+    "rangeland",
+    "developed_space",
+    "road",
+    "trees",
+    "water",
+    "agriculture_land",
+    "buildings",
+  ]
