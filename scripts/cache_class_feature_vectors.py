@@ -257,6 +257,8 @@ def main() -> None:
         max_samples_per_dataset = int(max_samples_per_dataset)
 
     seed = int(cfg_select(config, "run.seed", 42))
+    run_name_value = cfg_select(config, "run.name", None)
+    run_name = str(run_name_value) if run_name_value is not None else None
     cache_dir = Path(config.data.cache_dir)
 
     if not sim_image_root.exists():
@@ -273,18 +275,15 @@ def main() -> None:
         raise FileNotFoundError(f"translated_label_root does not exist: {translated_label_root}")
     if not deeplab_ckpt_path.exists():
         raise FileNotFoundError(f"deeplab_ckpt_path does not exist: {deeplab_ckpt_path}")
+    if translated_image_root is not None and not run_name:
+        raise ValueError("run.name must be set when data.translated_image_root is provided.")
 
     cache_dir.mkdir(parents=True, exist_ok=True)
-    save_config(config, cache_dir / "config.yaml")
-    metadata = {
+    reference_metadata = {
         "sim_image_root": str(sim_image_root.resolve()),
         "sim_label_root": str(sim_label_root.resolve()),
         "real_image_root": str(real_image_root.resolve()),
         "real_label_root": str(real_label_root.resolve()),
-        "translated_image_root": (
-            str(translated_image_root.resolve()) if translated_image_root is not None else None
-        ),
-        "translated_label_root": str(translated_label_root.resolve()),
         "rgb_parent_dirs": sorted(rgb_parent_dirs) if rgb_parent_dirs is not None else None,
         "label_parent_dir": label_parent_dir,
         "deeplab_ckpt_path": str(deeplab_ckpt_path.resolve()),
@@ -294,7 +293,7 @@ def main() -> None:
         "max_samples_per_dataset": max_samples_per_dataset,
         "seed": seed,
     }
-    write_metadata(metadata, cache_dir / "metadata.json")
+    write_metadata(reference_metadata, cache_dir / "reference_metadata.json")
 
     embedder = DeepLabEmbedder(
         ckpt_path=deeplab_ckpt_path,
@@ -302,14 +301,12 @@ def main() -> None:
         feature_layer=feature_layer,
     )
 
-    dataset_specs = [
+    reference_dataset_specs = [
         ("sim", sim_image_root, sim_label_root),
         ("real", real_image_root, real_label_root),
     ]
-    if translated_image_root is not None:
-        dataset_specs.append(("translated", translated_image_root, translated_label_root))
 
-    for dataset_name, image_root, label_root in dataset_specs:
+    for dataset_name, image_root, label_root in reference_dataset_specs:
         dataset_cache_dir = cache_dir / dataset_name
         pairs = load_or_create_pair_manifest(
             image_root=image_root,
@@ -328,7 +325,41 @@ def main() -> None:
         )
         summarize_embeddings(dataset_name, feats_by_class)
 
-    print(f"\nSaved reusable class feature caches to {cache_dir}")
+    print(f"\nSaved shared sim/real class feature caches to {cache_dir}")
+
+    if translated_image_root is not None:
+        translated_run_dir = cache_dir / run_name
+        translated_run_dir.mkdir(parents=True, exist_ok=True)
+        save_config(config, translated_run_dir / "config.yaml")
+
+        translated_metadata = dict(reference_metadata)
+        translated_metadata.update(
+            {
+                "run_name": run_name,
+                "translated_image_root": str(translated_image_root.resolve()),
+                "translated_label_root": str(translated_label_root.resolve()),
+            }
+        )
+        write_metadata(translated_metadata, translated_run_dir / "metadata.json")
+
+        translated_cache_dir = translated_run_dir / "translated"
+        translated_pairs = load_or_create_pair_manifest(
+            image_root=translated_image_root,
+            label_root=translated_label_root,
+            rgb_parent_dirs=rgb_parent_dirs,
+            label_parent_dir=label_parent_dir,
+            manifest_path=translated_cache_dir / "pairs.csv",
+            max_count=max_samples_per_dataset,
+            seed=seed,
+        )
+        translated_feats_by_class = load_or_compute_class_embeddings(
+            embedder=embedder,
+            pairs=translated_pairs,
+            batch_size=batch_size,
+            cache_path=translated_cache_dir / "deeplab_class_features.npz",
+        )
+        summarize_embeddings(f"translated:{run_name}", translated_feats_by_class)
+        print(f"Saved translated class feature cache to {translated_run_dir}")
 
 
 if __name__ == "__main__":

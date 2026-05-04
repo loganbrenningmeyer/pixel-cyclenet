@@ -1,0 +1,36 @@
+run:
+  name: oem_only_seg_only
+
+  eval:
+    lpips: false
+    fid: false
+    deeplab_fid: false
+    boundary_edge: true
+
+    run_pareto: true
+    plot_pareto: true
+
+data:
+  cyclenet_sim_dir: /develop/data/remote_sensing/tiled/projection/cyclenet_sim_proj/seg/oem_only_seg_only/ema
+  steps: [10000, 20000, 30000, 40000, 50000]
+
+  sim_dir: /develop/data/remote_sensing/tiled/projection/sim_proj
+  real_dir: /develop/data/remote_sensing/tiled/projection/oem_proj
+
+  image_parent_dir: opt
+  label_parent_dir: gt_ss_mask
+
+deeplab:
+  deeplab_ckpt_path: /cgi/data/nvesd/workspaces/logan/code/land_mapping/runs/deeplab/oem_subset/real-sim/training/checkpoints/step-50000.ckpt
+  feature_layer: prelogits
+  reference_cache_dir: /develop/data/eval/cyclenet/remote_sensing/project_translated/reference_cache/deeplab
+
+pareto:
+  selection_modes:
+    - fid_lpips_pareto_then_deeplab 
+    - fid_deeplab_pareto_then_lpips 
+    - deeplab_lpips_pareto_then_fid
+  select_by_checkpoint: false
+  pct_thresholds: [0.0]
+  max_lpips: 0.3
+  out_dir: /develop/code/eval/checkpoints

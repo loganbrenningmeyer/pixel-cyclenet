@@ -338,7 +338,12 @@ def compute_boundary_alignment_for_dir(
     return summary, pairs
 
 
-def main() -> None:
+def boundary_edge_sweep(
+    sim_dir: Path | str, 
+    cyclenet_sim_dir: Path | str,
+    steps: list[int],
+    mask_parent_dir: str = "gt_ss_mask",  
+):
     # Target spatial size used when loading translated RGB images and source masks.
     image_size = 256
 
@@ -353,29 +358,15 @@ def main() -> None:
     # to include every label in the boundary map.
     ignore_label = 0
 
-    # Directory tree containing the source segmentation masks.
-    # This can be the original sim dataset root as long as `mask_parent_dir`
-    # uniquely identifies mask files.
-    mask_root = Path("/cgi/data/nvesd/workspaces/logan/data/remote_sensing/tiled/projection/sim_proj")
-
-    # Immediate parent directory name used to identify mask files under mask_root.
-    mask_parent_dir = "gt_ss_mask"
-
-    # Root directory containing translated `step-{step}` sweeps.
-    model_proj_dir = Path("/cgi/data/nvesd/workspaces/logan/data/remote_sensing/tiled/projection/cyclenet_sim_proj/seg/oem_only_seg_only/ema")
-
-    # Checkpoints to evaluate.
-    steps = [2500, 5000, 10000, 20000, 30000, 40000, 50000]
-
     for step in steps:
-        step_dir = model_proj_dir / f"step-{step}"
+        step_dir = cyclenet_sim_dir / f"step-{step}"
         csv_out_path = step_dir / "boundary_edge_align_stats.csv"
         summary_rows: list[dict[str, object]] = []
 
         for step, noise_strength, cfg_weight, translated_dir in iter_candidate_dirs(step_dir):
             stats, pairs = compute_boundary_alignment_for_dir(
                 translated_dir=translated_dir,
-                mask_root=mask_root,
+                mask_root=sim_dir,
                 image_size=image_size,
                 boundary_radius=boundary_radius,
                 context_radius=context_radius,
@@ -397,7 +388,7 @@ def main() -> None:
                     "noise_strength": noise_strength,
                     "cfg_weight": cfg_weight,
                     "translated_dir": str(translated_dir),
-                    "mask_root": str(mask_root),
+                    "mask_root": str(sim_dir),
                     "mask_parent_dir": mask_parent_dir,
                     "paired_images": stats["paired_images_used"],
                     "image_size": image_size,
@@ -469,7 +460,4 @@ def main() -> None:
             writer.writerows(summary_rows)
 
         print(f"\nSaved boundary-edge alignment CSV to {csv_out_path}")
-
-
-if __name__ == "__main__":
-    main()
+    

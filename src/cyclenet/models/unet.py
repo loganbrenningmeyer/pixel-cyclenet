@@ -151,13 +151,13 @@ class UNet(nn.Module):
         self, x: torch.Tensor, t: torch.Tensor, d_emb: torch.Tensor
     ) -> torch.Tensor:
         """
-        
-        
+
+
         Args:
-        
-        
+
+
         Returns:
-        
+
         """
         # -------------------------
         # Time Embedding
@@ -197,13 +197,13 @@ class UNet(nn.Module):
         d_ctx: torch.Tensor,
     ) -> tuple[torch.Tensor, list[torch.Tensor]]:
         """
-        
-        
+
+
         Args:
-        
-        
+
+
         Returns:
-        
+
         """
         # -------------------------
         # Stem

@@ -2,6 +2,9 @@
 # Run
 # =========================
 run:
+  # Name of the translated run whose cache should live under `data.cache_dir/<run.name>/`.
+  # Required when `data.translated_image_root` is set.
+  name: oem_only
   seed: 42
 
 # =========================
@@ -9,18 +12,18 @@ run:
 # =========================
 data:
   # Root directory for simulated RGB imagery.
-  sim_image_root: /develop/data/remote_sensing/tiled/projection/sim_proj
+  sim_image_root: /develop/data/remote_sensing/tiled/projection/sim_proj/opt
   # Root directory for simulated label masks.
-  sim_label_root: /develop/data/remote_sensing/tiled/projection/sim_labels
+  sim_label_root: /develop/data/remote_sensing/tiled/projection/sim_proj/gt_ss_mask
   # Root directory for real RGB imagery.
-  real_image_root: /develop/data/remote_sensing/tiled/projection/oem_proj
+  real_image_root: /develop/data/remote_sensing/tiled/projection/oem_proj/opt
   # Root directory for real label masks.
-  real_label_root: /develop/data/remote_sensing/tiled/projection/oem_labels
+  real_label_root: /develop/data/remote_sensing/tiled/projection/oem_proj/gt_ss_mask
 
   # Optional translated RGB root. Set to null to skip translated caching.
-  translated_image_root: /develop/data/remote_sensing/tiled/projection/cyclenet_sim_proj/oem_only/ema/step-30000/strength-0.1/cfg-11.0
+  translated_image_root: /develop/data/remote_sensing/tiled/projection/cyclenet_sim_proj/oem_only/ema/step-20000/strength-0.3/cfg-2.0
   # Label root for translated imagery. Usually the sim label root if translated images preserve sim masks.
-  translated_label_root: /develop/data/remote_sensing/tiled/projection/sim_labels
+  translated_label_root: /develop/data/remote_sensing/tiled/projection/sim_proj/gt_ss_mask
 
   # Immediate parent directory names that identify RGB images.
   # Set to null to scan all image files directly under the image root tree.
@@ -30,8 +33,9 @@ data:
   # or flat filename-matched image/mask files.
   label_parent_dir: null
 
-  # Cache directory for manifests, metadata, and class feature bundles.
-  cache_dir: /develop/code/eval/cyclenet/remote_sensing/class_feature_cache
+  # Root cache directory. Shared `sim/` and `real/` caches are written here,
+  # while translated caches are written under `cache_dir/<run.name>/translated/`.
+  cache_dir: /develop/code/eval/thesis/class_feature_cache
 
 # =========================
 # Embedding

@@ -78,6 +78,23 @@ def overlay_mask(img: np.ndarray, mask: np.ndarray, ignore_value: int, alpha: fl
     return overlay.clip(0, 255).astype(np.uint8)
 
 
+def overlay_ignored_pixels(
+    img: np.ndarray,
+    mask: np.ndarray,
+    ignore_value: int,
+    alpha: float,
+    highlight_rgb: tuple[int, int, int] = (255, 0, 255),
+) -> np.ndarray:
+    ignored = mask == ignore_value
+
+    overlay = img.copy().astype(np.float32)
+    overlay[ignored] = (
+        (1.0 - alpha) * img[ignored].astype(np.float32)
+        + alpha * np.array(highlight_rgb, dtype=np.float32)
+    )
+    return overlay.clip(0, 255).astype(np.uint8)
+
+
 def draw_label_legend(panel: np.ndarray, ignore_value: int) -> np.ndarray:
     out = panel.copy()
     y = 22
@@ -111,7 +128,7 @@ def draw_label_legend(panel: np.ndarray, ignore_value: int) -> np.ndarray:
 
 def build_panel(img: np.ndarray, mask: np.ndarray, alpha: float) -> np.ndarray:
     overlay_ignore_0 = overlay_mask(img, mask, ignore_value=0, alpha=alpha)
-    overlay_ignore_8 = overlay_mask(img, mask, ignore_value=8, alpha=alpha)
+    ignored_only = overlay_ignored_pixels(img, mask, ignore_value=0, alpha=alpha)
 
     left = img.copy()
     cv2.putText(
@@ -126,16 +143,27 @@ def build_panel(img: np.ndarray, mask: np.ndarray, alpha: float) -> np.ndarray:
     )
 
     mid = draw_label_legend(overlay_ignore_0, ignore_value=0)
-    right = draw_label_legend(overlay_ignore_8, ignore_value=8)
+
+    right = ignored_only.copy()
+    cv2.putText(
+        right,
+        "Ignored Pixels",
+        (10, 22),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.6,
+        (255, 255, 255),
+        2,
+        cv2.LINE_AA,
+    )
 
     return np.concatenate([left, mid, right], axis=1)
 
 
 def main() -> None:
 
-    img_dir = Path("/cgi/data/nvesd/workspaces/logan/data/remote_sensing/tiled/sim/synrs3d/grid_g05_high_v1/opt")
-    mask_dir = Path("/cgi/data/nvesd/workspaces/logan/data/remote_sensing/tiled/sim/synrs3d/grid_g05_high_v1/gt_ss_mask")
-    out_dir = Path("./label_check")
+    img_dir = Path("/cgi/data/nvesd/workspaces/logan/data/remote_sensing/tiled/real_subset/oem_train/opt")
+    mask_dir = Path("/cgi/data/nvesd/workspaces/logan/data/remote_sensing/tiled/real_subset/oem_train/gt_ss_mask")
+    out_dir = Path("./oem_train_labels")
     out_dir.mkdir(parents=True, exist_ok=True)
 
     rng = random.Random(42)
@@ -166,7 +194,7 @@ def main() -> None:
         uniques = np.unique(mask)
         print(f"{name}: unique mask values = {uniques}")
 
-        panel = build_panel(img, mask, alpha=0.45)
+        panel = build_panel(img, mask, alpha=0.65)
         out_path = out_dir / f"{Path(name).stem}_overlay.png"
         cv2.imwrite(str(out_path), cv2.cvtColor(panel, cv2.COLOR_RGB2BGR))
 

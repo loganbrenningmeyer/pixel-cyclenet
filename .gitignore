@@ -12,4 +12,5 @@ torch_datasets/
 utils/
 CycleNet/
 outputs/
-info/thesis-wip.pdf
+info/thesis-wip.pdf\
+.vscode/

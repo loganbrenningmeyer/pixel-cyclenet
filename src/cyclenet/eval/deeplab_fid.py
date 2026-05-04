@@ -111,43 +111,21 @@ def load_or_compute_embeddings(
     )
 
 
-def main() -> None:
-    # DeepLab checkpoint used to build the task-aware embedding space.
-    deeplab_ckpt_path = Path("/cgi/data/nvesd/workspaces/logan/code/land_mapping/runs/deeplab/oem_subset/real-sim/training/checkpoints/step-50000.ckpt")
-
-    # DeepLab feature layer used for embedding extraction. `prelogits` is the
-    # intended task-aware default for Fréchet-distance comparison.
-    feature_layer = "prelogits"
-
+def deeplab_fid_sweep(
+    reference_dir: Path | str,
+    cyclenet_sim_dir: Path | str,
+    steps: list[int],
+    deeplab_ckpt_path: Path | str = "/cgi/data/nvesd/workspaces/logan/code/land_mapping/runs/deeplab/oem_subset/real-sim/training/checkpoints/step-50000.ckpt",
+    feature_layer: str = "prelogits",
+    reference_cache_dir: Path | str = "/cgi/data/nvesd/workspaces/logan/data/eval/cyclenet/remote_sensing/project_translated/reference_cache/deeplab",
+    translated_embed_filename: str = "deeplab_translated_embed.npy",
+):
     # Number of images embedded together on each forward pass.
     batch_size = 32
 
-    # Directory containing the real images used as the reference distribution.
-    # This is only needed when `reference_cache_dir / real_embed.npy` does not
-    # already exist.
-    real_dir = Path("/cgi/data/nvesd/workspaces/logan/data/remote_sensing/tiled/projection/oem_proj")
-
-    # Cache directory for DeepLab reference embeddings. If `real_embed.npy`
-    # already exists here, the script will reuse it instead of recomputing.
-    # A natural location is:
-    # `/.../project_translated/reference_cache/deeplab`
-    reference_cache_dir = Path("/cgi/data/nvesd/workspaces/logan/data/eval/cyclenet/remote_sensing/project_translated/reference_cache/deeplab")
-
-    # Filename used to cache translated DeepLab embeddings inside each
-    # `strength-{strength}/cfg-{cfg}` directory.
-    translated_embed_filename = "deeplab_translated_embed.npy"
-
-    # Single `step-{step}` directory whose `strength-{strength}/cfg-{cfg}`
-    # subdirectories contain translated image outputs.
-    # Example:
-    # `/.../all_real_ft_invar/step-30000`
-    # `/.../oem_only/ema/step-2500`
-    model_proj_dir = Path("/cgi/data/nvesd/workspaces/logan/data/remote_sensing/tiled/projection/cyclenet_sim_proj/seg/oem_only_seg_only/ema")
-    steps = [2500, 5000, 10000, 20000, 30000, 40000, 50000]
-
     for step in steps:
 
-        step_dir = model_proj_dir / f"step-{step}"
+        step_dir = Path(cyclenet_sim_dir) / f"step-{step}"
 
         # CSV path where the aggregated DeepLab Fréchet stats for this step will be saved.
         csv_out_path = step_dir / "deeplab_fd_stats.csv"
@@ -166,7 +144,7 @@ def main() -> None:
         real_embed_path = reference_cache_dir / "real_embed.npy"
         real_feats = load_or_compute_embeddings(
             embedder=embedder,
-            img_root=real_dir,
+            img_root=reference_dir,
             batch_size=batch_size,
             cache_path=real_embed_path,
         )
@@ -228,7 +206,3 @@ def main() -> None:
             writer.writerows(summary_rows)
 
         print(f"\nSaved DeepLab Fréchet stats CSV to {csv_out_path}")
-
-
-if __name__ == "__main__":
-    main()

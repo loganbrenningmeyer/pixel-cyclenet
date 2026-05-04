@@ -331,39 +331,116 @@ Important interpretation:
   scatter with manual subplot margins and disables the global tight save bbox
   for that figure, because Matplotlib 3D export can clip the z-axis label when
   combined with `tight_layout()` and `savefig.bbox="tight"`.
-- As of 2026-04-22, `src/cyclenet/eval/plotting/pareto.py` also writes a
-  staged selection figure for the `fid_deeplab_pareto_then_lpips` rule: a 3D
-  overview, a `FID` vs `DeepLab FD` Pareto-survivor panel, and a front-only
-  LPIPS strip that highlights the final lowest-LPIPS choice among survivors.
-  The plotting helper recomputes `is_pareto_fid_deeplab` and the staged
-  selected point from the merged metrics if those flags are absent in the CSV.
-  The story figure's 3D overview now labels the task-aware metric as
-  `DeepLabv3-FID`, uses `FID` as the vertical axis, and repositions that
-  vertical axis to the opposite edge via Matplotlib 3D axis `_axinfo`
-  juggling so the `FID` labels sit beside `DeepLabv3-FID` without changing the
-  overall viewing orientation; the story figure also inverts the LPIPS axis so
-  lower LPIPS visually decreases toward the center/good region. Because the
-  z-axis is manually repositioned, the story figure also forces the `FID`
-  z-label rotation to a fixed readable orientation. As of 2026-04-22,
-  `src/cyclenet/eval/plotting/pareto.py` exposes pairwise/3D/story title size,
-  legend size, title padding, and a manual story 3D title `y` offset directly
-  in `main()` so thesis-figure typography can be tuned without editing plotting
-  internals. Checkpoint legends/panel ordering are now also sorted by numeric
-  `step` rather than lexicographic `checkpoint_name`, so labels appear in the
-  expected order such as `2.5k, 10k, 20k, 30k`. The story figure now keeps
-  selected-point stars in the 3D and Pareto-front panels but only draws text
-  parameter annotations in the final LPIPS panel to reduce clutter.
+- As of 2026-04-29, `src/cyclenet/eval/plotting/pareto.py` is no longer tied
+  to a single selection rule. It now discovers all saved
+  `is_selected__<selection_mode>` columns from the merged checkpoint-metrics
+  CSV, writes one plot subdirectory per selection mode, and labels the
+  highlighted candidate pool as either the exact Pareto front or a
+  threshold-expanded Pareto pool such as `(+5%)` depending on the saved
+  `pareto_threshold_pct`.
+- As of 2026-04-29, `src/cyclenet/eval/plotting/pareto.py` also generalizes
+  the staged "selection story" figure across the pairwise two-pass rules
+  (`fid_lpips_pareto_then_deeplab`, `fid_deeplab_pareto_then_lpips`,
+  `deeplab_lpips_pareto_then_fid`). Each mode gets a 3D overview, a pass-1
+  candidate-pool panel for the relevant metric pair, and a pass-2 strip for
+  the tie-break metric, with labels derived from the active selection mode.
+- As of 2026-04-30, the Pareto analysis/plotting stack also supports
+  boundary-aware selection modes over
+  `(deeplab_fd, boundary_edge_inverse_ratio_mean)`:
+  - `deeplab_boundary_pareto_then_fid`: selects the lowest-`fid` point from
+    the exact boundary/task Pareto front.
+  - `deeplab_boundary_pareto_then_knee`: selects the geometric knee point on
+    that exact Pareto front.
+  It also supports `fid_boundary_pareto_then_knee`, which selects the
+  geometric knee point on the exact `(fid, boundary_edge_inverse_ratio_mean)`
+  Pareto front.
+  The pairwise grid and 3D scatter switch from LPIPS axes to boundary-edge
+  inverse ratio axes automatically for these modes.
+- As of 2026-05-03, `src/cyclenet/eval/analyze_checkpoint_metrics.py` also
+  supports `fid_deeplab_boundary_pareto_then_knee`, which selects a compromise
+  point from the exact 3-metric Pareto set over
+  `(fid, deeplab_fd, boundary_edge_inverse_ratio_mean)`. As of 2026-05-03,
+  that 3-metric mode no longer uses the N-D line-distance heuristic; it now
+  selects the exact-Pareto point with minimum normalized ideal-point distance,
+  while the 2D boundary-aware modes still use the geometric knee heuristic.
+- As of 2026-05-03, `src/cyclenet/eval/plotting/pareto.py` also recognizes
+  `fid_deeplab_boundary_pareto_then_knee` and the corresponding
+  `is_pareto_3d_boundary` / `is_candidate_3d_boundary` columns. The plotter
+  treats that mode as boundary-aware, so its pairwise grids and 3D scatter use
+  boundary-edge inverse ratio axes instead of LPIPS axes. The plot title for
+  that mode now labels it as an ideal-point selector rather than a knee
+  selector.
+- As of 2026-05-03, `src/cyclenet/eval/thesis_plots/pareto.py` provides a
+  compact thesis-oriented helper that takes a mapping of model names to merged
+  checkpoint-metrics CSVs and renders a single-row multi-model figure on the
+  `(boundary_edge_inverse_ratio_mean, deeplab_fd)` plane, showing all
+  candidates, the exact Pareto front, and the selected configuration when the
+  requested selection column is present. It also now renders a normalized
+  knee-geometry companion figure for 2D Pareto-knee selection modes plus a
+  combined 2-row figure with raw metric space on top and normalized knee space
+  below. The combined figure only annotates the normalized row, and the
+  selected-point annotations now use a boxed callout with a light connector for
+  readability. The thesis Pareto convention is to encode model family by
+  shared color and checkpoint step by shared marker shape via
+  `src/cyclenet/eval/plotting/set_style.py`.
+  Selected operating points now reuse the checkpoint marker shape with a red
+  fill and black outline instead of a star so the selected checkpoint remains
+  visible.
+- As of 2026-05-03, `src/cyclenet/eval/thesis_plots/umap.py` reads
+  `eval/thesis/selected_models.csv` plus a cached DeepLab UMAP reference
+  directory, projects each selected model's translated embedding array with the
+  cached `umap_projector.pkl`, and renders a shared-axis row figure with sim
+  and real reference clouds plus one translated cloud per selected model. The
+  thesis UMAP row uses model-family colors from
+  `src/cyclenet/eval/plotting/set_style.py` and plain circle markers for the
+  translated clouds and centroids.
+- As of 2026-05-03, `scripts/cache_class_feature_vectors.py` now separates
+  shared reference caches from per-run translated caches. It writes `sim/` and
+  `real/` class-feature bundles directly under the configured `cache_dir`,
+  writes reference extraction metadata to `reference_metadata.json`, and writes
+  translated bundles under `cache_dir/<run.name>/translated/` with per-run
+  `config.yaml` and `metadata.json`. This avoids recomputing sim/real class
+  embeddings for every translated run while preserving run-specific translated
+  cache provenance.
+- As of 2026-05-03, `src/cyclenet/eval/thesis_plots/class_feature_distance.py`
+  provides a thesis-oriented batch cache + analysis workflow driven by
+  `eval/thesis/selected_models.csv`. The cache helper stores shared `sim/` and
+  `real/` class-feature bundles once under a configured root cache directory,
+  then caches each selected model's translated class features under
+  `cache_dir/<model_name>/translated/` using the `image_dir` and `label_dir`
+  columns from the CSV, plus per-model metadata snapshots. The analysis helper
+  then loads those caches, computes per-class Fréchet distance to the `real`
+  class features for `sim` and every selected model, and writes both absolute
+  FD tables and delta-vs-sim CSVs for downstream thesis plotting.
+- As of 2026-05-03, `src/cyclenet/eval/thesis_plots/feature_distance.py`
+  plots the thesis class-feature-distance analysis CSVs, currently as a
+  class-wise delta-FD heatmap (model type by class, relative to sim) and a
+  macro-averaged delta-FD bar chart by model type. It uses `MODEL_NAMES` and
+  `MODEL_COLORS` from `src/cyclenet/eval/plotting/set_style.py` for consistent
+  paper-facing labels and colors.
+- As of 2026-05-03, `src/cyclenet/eval/thesis_plots/boundary_edge_align.py`
+  provides a thesis-oriented diagnostic plotter for the custom boundary-edge
+  metric. Given paired simulated RGBs, simulated masks, and translated RGBs,
+  it samples filename-matched examples and saves one 2x2 figure per sample
+  showing the source segmentation mask, the dilated boundary-band overlay, the
+  translated RGB image, and Sobel gradient magnitude with the boundary and
+  surrounding bands overlaid.
 - As of 2026-04-22, `src/cyclenet/eval/plotting/pareto.py` also provides a
   simple single-panel `plot_fid_lpips_tradeoff()` helper for clean
   realism-vs-preservation plots. It keeps checkpoint colors and Pareto front
   markers/lines but omits selected-point stars and text annotations.
-- `scripts/analyze_checkpoint_metrics.py` performs cross-checkpoint selection
-  analysis given per-checkpoint LPIPS, FID, and DeepLab-FD CSVs. It merges the
-  metrics on `(step, noise_strength, cfg_weight)`, computes Pareto-optimal
-  flags for `(DeepLab FD, LPIPS)`, `(FID, DeepLab FD)`, and for the full
-  `(FID, LPIPS, DeepLab FD)` triplet, selects one operating point per
-  checkpoint using a configurable rule, and writes merged CSVs plus a
-  checkpoint summary table (including a LaTeX export) for thesis reporting.
+- As of 2026-04-29, `src/cyclenet/eval/analyze_checkpoint_metrics.py` can
+  expand each exact Pareto front into a broader candidate pool using an
+  optional percentage tolerance. A row is included in that pool if it stays
+  within the configured percentage of at least one exact Pareto point for the
+  active metric pair or triplet.
+- As of 2026-04-29, `src/cyclenet/eval/analyze_checkpoint_metrics.py` also
+  runs multiple selection modes in one pass instead of a single
+  `selection_mode`. The merged CSV now stores the exact Pareto flags, the
+  threshold-expanded candidate-pool flags, and one `is_selected__...` column
+  per evaluated selection mode; the summary CSV and LaTeX export now contain
+  one row per selection mode so checkpoint-selection comparisons can be made
+  without rerunning the merge step.
 - `src/cyclenet/eval/plotting/heatmap.py` now supports LPIPS, FID, and
   CLIP-FID sweep CSVs from the translation-evaluation helpers. As of
   2026-04-22, it also supports DeepLab feature-space Fréchet distance CSVs.
@@ -373,11 +450,10 @@ Important interpretation:
   entry points while sharing the same core grid/annotation plotting logic, and
   now also exposes `save_deeplab_fd_heatmaps_from_csv()`.
 - `src/cyclenet/eval/plotting/pareto.py` plots cross-checkpoint tradeoff
-  figures from the merged CSV produced by `scripts/analyze_checkpoint_metrics.py`.
-  It generates a 3-panel pairwise tradeoff grid
-  (`LPIPS/DeepLab FD`, `LPIPS/FID`, `DeepLab FD/FID`) plus a 3D scatter, with
-  checkpoint colors, Pareto-optimal points highlighted, and selected operating
-  points marked separately.
+  figures from the merged CSV produced by `src/cyclenet/eval/analyze_checkpoint_metrics.py`.
+  It now generates the pairwise grid, `FID` vs `LPIPS` tradeoff plot, 3D
+  scatter, and when supported a staged story figure for every saved selection
+  mode, using per-mode subfolders and the correct candidate-pool labels.
 - `src/cyclenet/eval/fid.py` now runs at the granularity of a single
   `step-*` directory rather than scanning a whole translated-root tree. Point
   `step_dir` at one checkpoint folder, and it will evaluate only that step's
@@ -630,6 +706,13 @@ Important interpretation:
   revisited.
 - FID and CLIP metrics in sweeps are ranking heuristics, not publication-grade
   scores, especially at the smaller default sample counts.
+- As of 2026-04-29, the evaluation helpers do not all treat mixed RGB/mask
+  roots consistently. `src/cyclenet/eval/deeplab_fid.py` skips
+  `gt_ss_mask/`, but the current `src/cyclenet/eval/lpips.py` and
+  `src/cyclenet/eval/fid.py` still recurse every image file under the given
+  root. Point LPIPS/FID at RGB-only directories such as `opt/`, or add an
+  explicit RGB-parent filter before using dataset roots that also contain
+  segmentation masks.
 - Preservation can still regress even when realism metrics improve, so overlay
   checks and LPIPS should remain part of candidate selection.
 - Seg-only ControlNet conditioning without SPADE has recently looked more

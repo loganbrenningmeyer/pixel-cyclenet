@@ -158,24 +158,13 @@ def compute_average_lpips(
     return float(values.mean()), values, pairs
 
 
-def main() -> None:
+def lpips_sweep(sim_dir: Path | str, cyclenet_sim_dir: Path | str, steps: list[int]):
     # Number of image pairs to score together on each forward pass.
     batch_size = 32
 
-    # Directory containing the source sim images to compare.
-    sim_dir = "/develop/data/remote_sensing/tiled/projection/sim_proj/opt"
-
-    # Single `step-{step}` directory whose `strength-{strength}/cfg-{cfg}` subdirectories
-    # contain translated outputs to compare against the source sim images.
-    # Example:
-    # `/.../all_real_ft_invar/step-30000`
-    # `/.../oem_only/ema/step-2500`
-    model_proj_dir = Path("/cgi/data/nvesd/workspaces/logan/data/remote_sensing/tiled/projection/cyclenet_sim_proj/seg/oem_only_seg_only/ema")
-    steps = [2500, 5000, 10000, 20000, 30000, 40000, 50000]
-
     for step in steps:
 
-        step_dir = model_proj_dir / f"step-{step}"
+        step_dir = Path(cyclenet_sim_dir) / f"step-{step}"
 
         # CSV path where the aggregated per-setting LPIPS stats for this step will be saved.
         csv_out_path = step_dir / "lpips_stats.csv"
@@ -235,7 +224,3 @@ def main() -> None:
             writer.writerows(summary_rows)
 
         print(f"\nSaved LPIPS stats CSV to {csv_out_path}")
-
-
-if __name__ == "__main__":
-    main()
