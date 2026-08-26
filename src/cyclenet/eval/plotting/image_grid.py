@@ -3,6 +3,7 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
+from matplotlib.patches import Rectangle
 from matplotlib.gridspec import GridSpec
 from matplotlib.lines import Line2D
 import torch
@@ -66,6 +67,10 @@ def plot_image_grid(
     subplot_right: float = 0.995,
     save_pad_inches: float = 0.03,
     image_interpolation: str = "nearest",
+    highlight_indices: list[int] | None = None,
+    highlight_color: str = "#111827",
+    highlight_linewidth: float = 2.0,
+    highlight_inset: float = 0.01,
 ):
     """
     Plots image grid with specified n_cols and axes labels
@@ -187,6 +192,30 @@ def plot_image_grid(
         if source_image is not None and source_mode == "grid_column":
             col += 1
         axs[row, col].axis("off")
+
+    highlight_index_set = set(highlight_indices or [])
+    for idx in highlight_index_set:
+        if idx < 0 or idx >= n_images:
+            raise ValueError(f"highlight_indices contains out-of-range image index {idx}.")
+
+        row = idx // n_cols
+        col = idx % n_cols
+        if source_image is not None and source_mode == "grid_column":
+            col += 1
+
+        axs[row, col].add_patch(
+            Rectangle(
+                (highlight_inset, highlight_inset),
+                max(0.0, 1.0 - 2.0 * highlight_inset),
+                max(0.0, 1.0 - 2.0 * highlight_inset),
+                transform=axs[row, col].transAxes,
+                fill=False,
+                edgecolor=highlight_color,
+                linewidth=highlight_linewidth,
+                clip_on=False,
+                zorder=10,
+            )
+        )
 
     if row_labels is not None:
         row_label_side = row_label_side.lower()

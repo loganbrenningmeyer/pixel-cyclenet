@@ -3,15 +3,181 @@ from __future__ import annotations
 import csv
 import json
 from pathlib import Path
+from typing import Protocol, TypeVar
 
 import numpy as np
 import pandas as pd
+import torch
+import torch.nn.functional as F
+from PIL import Image
+from torchvision.models import Inception_V3_Weights, inception_v3
+from torchvision.models.feature_extraction import create_feature_extractor
 
+from cyclenet.data.dataset import load_label_mask
 from cyclenet.eval.embed import DeepLabEmbedder
 
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".bmp", ".webp"}
 REQUIRED_SELECTED_MODEL_COLUMNS = {"model_name", "image_dir", "label_dir"}
+CLASS_FEATURE_CACHE_FILENAMES = {
+    "deeplab": "deeplab_class_features.npz",
+    "fid": "fid_class_features.npz",
+}
+T = TypeVar("T")
+
+
+def _batched(items: list[T], batch_size: int) -> list[list[T]]:
+    if batch_size <= 0:
+        raise ValueError(f"batch_size must be positive, got {batch_size}")
+    return [items[i : i + batch_size] for i in range(0, len(items), batch_size)]
+
+
+class ClassFeatureEmbedder(Protocol):
+    def embed_by_class(
+        self,
+        img_paths: list[str],
+        label_paths: list[str],
+        batch_size: int = 64,
+        save_path: str | Path | None = None,
+    ) -> dict[int, np.ndarray]: ...
+
+
+def normalize_feature_extractor(feature_extractor: str) -> str:
+    normalized = feature_extractor.lower().strip()
+    if normalized not in CLASS_FEATURE_CACHE_FILENAMES:
+        raise ValueError(
+            f"Unsupported feature_extractor '{feature_extractor}'. "
+            f"Expected one of: {', '.join(sorted(CLASS_FEATURE_CACHE_FILENAMES))}."
+        )
+    return normalized
+
+
+def class_feature_cache_filename(feature_extractor: str) -> str:
+    return CLASS_FEATURE_CACHE_FILENAMES[normalize_feature_extractor(feature_extractor)]
+
+
+def class_feature_metadata_name(feature_extractor: str, base_name: str) -> str:
+    feature_extractor = normalize_feature_extractor(feature_extractor)
+    if feature_extractor == "deeplab":
+        return base_name
+    stem = Path(base_name).stem
+    suffix = Path(base_name).suffix
+    return f"{stem}_{feature_extractor}{suffix}"
+
+
+def save_class_embeddings(
+    feats_by_class: dict[int, np.ndarray],
+    save_path: str | Path | None,
+) -> None:
+    if save_path is None:
+        return
+
+    save_path = Path(save_path)
+    save_path.parent.mkdir(parents=True, exist_ok=True)
+    np.savez(
+        save_path,
+        **{
+            f"class_{class_id}": feats
+            for class_id, feats in sorted(feats_by_class.items())
+        },
+    )
+
+
+class FIDClassEmbedder:
+    def __init__(
+        self,
+        num_classes: int = 8,
+        feature_layer: str = "Mixed_7c",
+        device: str | torch.device | None = None,
+    ):
+        self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+        self.num_classes = int(num_classes)
+        self.feature_layer = feature_layer
+
+        weights = Inception_V3_Weights.IMAGENET1K_V1
+        base_model = inception_v3(weights=weights).to(self.device)
+        base_model.eval()
+        self.model = create_feature_extractor(
+            base_model,
+            return_nodes={feature_layer: "feat"},
+        ).to(self.device)
+        self.model.eval()
+        self.transforms = weights.transforms()
+
+    def embed_by_class(
+        self,
+        img_paths: list[str],
+        label_paths: list[str],
+        batch_size: int = 64,
+        save_path: str | Path | None = None,
+    ) -> dict[int, np.ndarray]:
+        if len(img_paths) != len(label_paths):
+            raise ValueError(
+                f"img_paths and label_paths must have the same length, got "
+                f"{len(img_paths)} and {len(label_paths)}"
+            )
+
+        feats_by_class: dict[int, list[np.ndarray]] = {
+            class_id: [] for class_id in range(1, self.num_classes + 1)
+        }
+        feature_dim: int | None = None
+        paired_paths = list(zip(img_paths, label_paths, strict=True))
+
+        with torch.inference_mode():
+            for batch_pairs in _batched(paired_paths, batch_size):
+                images = []
+                masks = []
+
+                for img_path, label_path in batch_pairs:
+                    with Image.open(img_path) as img:
+                        images.append(self.transforms(img.convert("RGB")))
+
+                    mask_np = np.asarray(load_label_mask(Path(label_path)), dtype=np.int64)
+                    masks.append(torch.from_numpy(mask_np))
+
+                x = torch.stack(images, dim=0).to(self.device)
+                feats = self.model(x)["feat"]
+                if feats.ndim == 2:
+                    feats = feats[:, :, None, None]
+                elif feats.ndim != 4:
+                    raise RuntimeError(
+                        f"Expected FID feature layer '{self.feature_layer}' to return a "
+                        f"2D or 4D tensor, got shape {tuple(feats.shape)}."
+                    )
+
+                _, channels, feat_height, feat_width = feats.shape
+                feature_dim = channels
+
+                mask_tensor = torch.stack(masks, dim=0).unsqueeze(1).float().to(self.device)
+                mask_tensor = F.interpolate(
+                    mask_tensor,
+                    size=(feat_height, feat_width),
+                    mode="nearest",
+                ).squeeze(1).long()
+
+                for class_id in range(1, self.num_classes + 1):
+                    class_mask = (mask_tensor == class_id).unsqueeze(1)
+                    class_counts = class_mask.sum(dim=(2, 3)).squeeze(1)
+                    valid = class_counts > 0
+                    if not valid.any():
+                        continue
+
+                    masked_sum = (feats * class_mask).sum(dim=(2, 3))
+                    pooled = masked_sum[valid] / class_counts[valid].unsqueeze(1).clamp_min(1)
+                    feats_by_class[class_id].append(
+                        pooled.cpu().numpy().reshape(-1, channels).astype(np.float32, copy=False)
+                    )
+
+        feats_by_class_np = {
+            class_id: (
+                np.concatenate(class_feats, axis=0)
+                if class_feats
+                else np.empty((0, feature_dim or 0), dtype=np.float32)
+            )
+            for class_id, class_feats in feats_by_class.items()
+        }
+        save_class_embeddings(feats_by_class_np, save_path)
+        return feats_by_class_np
 
 
 def as_parent_dir_set(value: str | list[str] | tuple[str, ...] | None) -> set[str] | None:
@@ -202,7 +368,7 @@ def load_class_embeddings(cache_path: Path) -> dict[int, np.ndarray]:
 
 
 def load_or_compute_class_embeddings(
-    embedder: DeepLabEmbedder,
+    embedder: ClassFeatureEmbedder,
     pairs: list[tuple[Path, Path]],
     batch_size: int,
     cache_path: Path,
@@ -257,7 +423,8 @@ def cache_dataset(
     label_parent_dir: str | None,
     max_samples_per_dataset: int | None,
     seed: int,
-    embedder: DeepLabEmbedder,
+    feature_extractor: str,
+    embedder: ClassFeatureEmbedder,
     batch_size: int,
 ) -> dict[int, np.ndarray]:
     dataset_cache_dir = cache_root / dataset_name
@@ -274,9 +441,9 @@ def cache_dataset(
         embedder=embedder,
         pairs=pairs,
         batch_size=batch_size,
-        cache_path=dataset_cache_dir / "deeplab_class_features.npz",
+        cache_path=dataset_cache_dir / class_feature_cache_filename(feature_extractor),
     )
-    summarize_embeddings(dataset_name, feats_by_class)
+    summarize_embeddings(f"{feature_extractor}:{dataset_name}", feats_by_class)
     return feats_by_class
 
 
@@ -287,8 +454,9 @@ def cache_selected_model_class_features(
     real_image_root: str | Path,
     real_label_root: str | Path,
     cache_dir: str | Path,
-    deeplab_ckpt_path: str | Path,
-    feature_layer: str = "prelogits",
+    deeplab_ckpt_path: str | Path | None = None,
+    feature_layer: str | None = None,
+    feature_extractor: str = "deeplab",
     num_classes: int = 8,
     batch_size: int = 32,
     max_samples_per_dataset: int | None = None,
@@ -297,13 +465,19 @@ def cache_selected_model_class_features(
     seed: int = 42,
 ) -> Path:
     selected_df = load_selected_models(selected_models_csv)
+    feature_extractor = normalize_feature_extractor(feature_extractor)
+    resolved_feature_layer = feature_layer or (
+        "prelogits" if feature_extractor == "deeplab" else "Mixed_7c"
+    )
 
     sim_image_root = Path(sim_image_root)
     sim_label_root = Path(sim_label_root)
     real_image_root = Path(real_image_root)
     real_label_root = Path(real_label_root)
     cache_dir = Path(cache_dir)
-    deeplab_ckpt_path = Path(deeplab_ckpt_path)
+    resolved_deeplab_ckpt_path = (
+        Path(deeplab_ckpt_path) if deeplab_ckpt_path is not None else None
+    )
     rgb_parent_dir_set = as_parent_dir_set(rgb_parent_dirs)
 
     for path, label in [
@@ -311,10 +485,17 @@ def cache_selected_model_class_features(
         (sim_label_root, "sim_label_root"),
         (real_image_root, "real_image_root"),
         (real_label_root, "real_label_root"),
-        (deeplab_ckpt_path, "deeplab_ckpt_path"),
     ]:
         if not path.exists():
             raise FileNotFoundError(f"{label} does not exist: {path}")
+
+    if feature_extractor == "deeplab":
+        if resolved_deeplab_ckpt_path is None:
+            raise ValueError("deeplab_ckpt_path is required when feature_extractor='deeplab'")
+        if not resolved_deeplab_ckpt_path.exists():
+            raise FileNotFoundError(
+                f"deeplab_ckpt_path does not exist: {resolved_deeplab_ckpt_path}"
+            )
 
     cache_dir.mkdir(parents=True, exist_ok=True)
 
@@ -326,8 +507,13 @@ def cache_selected_model_class_features(
         "real_label_root": str(real_label_root.resolve()),
         "rgb_parent_dirs": sorted(rgb_parent_dir_set) if rgb_parent_dir_set is not None else None,
         "label_parent_dir": label_parent_dir,
-        "deeplab_ckpt_path": str(deeplab_ckpt_path.resolve()),
-        "feature_layer": feature_layer,
+        "deeplab_ckpt_path": (
+            str(resolved_deeplab_ckpt_path.resolve())
+            if feature_extractor == "deeplab" and resolved_deeplab_ckpt_path is not None
+            else None
+        ),
+        "feature_extractor": feature_extractor,
+        "feature_layer": resolved_feature_layer,
         "num_classes": int(num_classes),
         "batch_size": int(batch_size),
         "max_samples_per_dataset": max_samples_per_dataset,
@@ -340,24 +526,36 @@ def cache_selected_model_class_features(
         "real_label_root",
         "rgb_parent_dirs",
         "label_parent_dir",
-        "deeplab_ckpt_path",
         "feature_layer",
         "num_classes",
         "batch_size",
         "max_samples_per_dataset",
         "seed",
     ]
+    if feature_extractor != "deeplab":
+        reference_compare_keys.append("feature_extractor")
+    if feature_extractor == "deeplab":
+        reference_compare_keys.append("deeplab_ckpt_path")
+
     validate_or_refresh_metadata(
         reference_metadata,
-        cache_dir / "reference_metadata.json",
+        cache_dir / class_feature_metadata_name(feature_extractor, "reference_metadata.json"),
         compare_keys=reference_compare_keys,
     )
 
-    embedder = DeepLabEmbedder(
-        ckpt_path=deeplab_ckpt_path,
-        num_classes=int(num_classes),
-        feature_layer=feature_layer,
-    )
+    if feature_extractor == "deeplab":
+        if resolved_deeplab_ckpt_path is None:
+            raise AssertionError("resolved_deeplab_ckpt_path must be set for DeepLab features")
+        embedder: ClassFeatureEmbedder = DeepLabEmbedder(
+            ckpt_path=resolved_deeplab_ckpt_path,
+            num_classes=int(num_classes),
+            feature_layer=resolved_feature_layer,
+        )
+    else:
+        embedder = FIDClassEmbedder(
+            num_classes=int(num_classes),
+            feature_layer=resolved_feature_layer,
+        )
 
     cache_dataset(
         dataset_name="sim",
@@ -368,6 +566,7 @@ def cache_selected_model_class_features(
         label_parent_dir=label_parent_dir,
         max_samples_per_dataset=max_samples_per_dataset,
         seed=int(seed),
+        feature_extractor=feature_extractor,
         embedder=embedder,
         batch_size=int(batch_size),
     )
@@ -380,6 +579,7 @@ def cache_selected_model_class_features(
         label_parent_dir=label_parent_dir,
         max_samples_per_dataset=max_samples_per_dataset,
         seed=int(seed),
+        feature_extractor=feature_extractor,
         embedder=embedder,
         batch_size=int(batch_size),
     )
@@ -419,7 +619,7 @@ def cache_selected_model_class_features(
         ]
         validate_or_refresh_metadata(
             row_metadata,
-            model_cache_dir / "metadata.json",
+            model_cache_dir / class_feature_metadata_name(feature_extractor, "metadata.json"),
             compare_keys=row_compare_keys,
         )
         Path(model_cache_dir / "selected_model_row.json").write_text(
@@ -435,12 +635,19 @@ def cache_selected_model_class_features(
             label_parent_dir=label_parent_dir,
             max_samples_per_dataset=max_samples_per_dataset,
             seed=int(seed) + row_idx,
+            feature_extractor=feature_extractor,
             embedder=embedder,
             batch_size=int(batch_size),
         )
-        print(f"Saved translated class feature cache for {model_name} to {model_cache_dir}")
+        print(
+            f"Saved {feature_extractor} translated class feature cache for "
+            f"{model_name} to {model_cache_dir}"
+        )
 
-    print(f"\nFinished caching class feature vectors for selected models under {cache_dir}")
+    print(
+        f"\nFinished caching {feature_extractor} class feature vectors for selected "
+        f"models under {cache_dir}"
+    )
     return cache_dir
 
 
@@ -463,8 +670,11 @@ def main() -> None:
         "/cgi/data/nvesd/workspaces/logan/code/land_mapping/runs/deeplab/oem_subset/real-sim/"
         "training/checkpoints/step-50000.ckpt"
     )
-    # DeepLab feature layer to pool over for class-wise vectors.
-    feature_layer = "prelogits"
+    # Feature extractor for class-wise vectors. Supported values: `deeplab` and `fid`.
+    feature_extractor = "deeplab"
+    # Feature layer to pool over for class-wise vectors. Use `None` for the
+    # extractor default: `prelogits` for DeepLab, `Mixed_7c` for FID/Inception.
+    feature_layer = None
     # Number of semantic classes excluding ignore.
     num_classes = 8
     # Batch size for embedding extraction.
@@ -487,6 +697,7 @@ def main() -> None:
         real_label_root=real_label_root,
         cache_dir=cache_dir,
         deeplab_ckpt_path=deeplab_ckpt_path,
+        feature_extractor=feature_extractor,
         feature_layer=feature_layer,
         num_classes=num_classes,
         batch_size=batch_size,

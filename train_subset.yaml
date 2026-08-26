@@ -1,0 +1,80 @@
+# =========================
+# Run
+# =========================
+run:
+  name: sim
+  runs_dir: /develop/code/runs/deeplab/oem_selected
+
+  seed: 44
+
+# =========================
+# Optional Sweep
+# -- When sweep.runs is set, train_subset.py will launch one run per entry
+# -- Each entry overrides run.name and can override data.translated_image_dir
+# -- All runs are written under the same run.runs_dir
+# =========================
+# sweep:
+#   runs:
+#     - name: oem_only/step-20000/strength-0.3/cfg-2.0
+#       translated_image_dir: /develop/data/remote_sensing/tiled/cyclenet_selected_subset/oem_only/step-20000/strength-0.3/cfg-2.0
+#     - name: oem_only_seg_only/step-40000/strength-0.5/cfg-1.0
+#       translated_image_dir: /develop/data/remote_sensing/tiled/cyclenet_selected_subset/oem_only_seg_only/step-40000/strength-0.5/cfg-1.0
+#     - name: oem_only_seg_only_spade/step-50000/strength-0.3/cfg-2.0
+#       translated_image_dir: /develop/data/remote_sensing/tiled/cyclenet_selected_subset/oem_only_seg_only_spade/step-50000/strength-0.3/cfg-2.0
+#     - name: oem_only_rgb_only_spade/step-30000/strength-0.3/cfg-5.0
+#       translated_image_dir: /develop/data/remote_sensing/tiled/cyclenet_selected_subset/oem_only_rgb_only_spade/step-30000/strength-0.3/cfg-5.0
+#     - name: oem_only_rgb_only_spade_mid_skips/step-40000/strength-0.4/cfg-2.0
+#       translated_image_dir: /develop/data/remote_sensing/tiled/cyclenet_selected_subset/oem_only_rgb_only_spade_mid_skips/step-40000/strength-0.4/cfg-2.0
+
+# =========================
+# Training
+# =========================
+train:
+  epochs: 50
+  steps_per_epoch: 1000
+  batch_size: 16
+  lr: 1e-4
+  weight_decay: 1e-4
+  aux_weight: 0.4
+
+# =========================
+# Dataset
+# =========================
+data:
+  sim_image_dir: /develop/data/remote_sensing/tiled/sim_subset/synrs3d
+  translated_image_dir: /develop/data/remote_sensing/tiled/cyclenet_selected_subset/oem_only_seg_only_spade/step-50000/strength-0.3/cfg-2.0
+  sim_label_dir: /develop/data/remote_sensing/tiled/sim_subset/synrs3d
+  sim_train_csv: /develop/data/remote_sensing/tiled/sim_subset/sim_train.csv
+
+  image_parent_dir: opt
+  label_parent_dir: gt_ss_mask
+
+  real_train_csv: /develop/data/remote_sensing/tiled/real/OEM/oem_train.csv
+  real_valid_csv: /develop/data/remote_sensing/tiled/real/OEM/oem_val.csv
+
+  train_real: false
+  real_fraction: 1.0
+  train_sim: true
+  train_translated: false
+  translated_prob: 0.5
+
+  crop_real: false
+
+  num_classes: 8
+  class_names: [
+    "bareland",
+    "rangeland",
+    "developed_space",
+    "road",
+    "trees",
+    "water",
+    "agriculture_land",
+    "buildings",
+  ]
+
+# =========================
+# Logging
+# =========================
+logging:
+  loss_interval: 10
+  ckpt_interval: 1000

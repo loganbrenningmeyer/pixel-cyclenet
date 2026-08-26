@@ -1,0 +1,17 @@
+\begin{table*}[t]
+    \centering
+    \small
+    \setlength{\tabcolsep}{4pt}
+    \caption{Per-class mIoU for the simulated baseline and the Seg translation model.}
+    \label{tab:sim_seg_per_class_miou}
+    \resizebox{\textwidth}{!}{%
+    \begin{tabular}{lcccccccc}
+        \toprule
+        Model & Bareland & Rangeland & Developed Space & Road & Trees & Water & Agriculture Land & Buildings \\
+        \midrule
+        Sim & 0.076 & 0.226 & 0.182 & 0.152 & 0.183 & 0.145 & 0.207 & 0.328 \\
+        Seg & 0.044 & 0.129 & 0.168 & 0.372 & 0.456 & 0.176 & 0.264 & 0.486 \\
+        \bottomrule
+    \end{tabular}%
+    }
+\end{table*}

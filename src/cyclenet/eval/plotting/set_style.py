@@ -2,7 +2,7 @@ import matplotlib as mpl
 
 COLORS = {
     "sim": "#6b7280",
-    "translated": "#2563eb",
+    "translated": "#7c7c7c",
     "real": "#000000",
     "highlight": "#111827",
 }
@@ -16,20 +16,52 @@ CHECKPOINT_MARKERS = {
 }
 
 MODEL_COLORS = {
-    "oem_only": "#3B82F6",                     # RGB, No SPADE
-    "oem_only_rgb_only_spade": "#14B8A6",     # RGB + SPADE
-    "oem_only_rgb_only_spade_mid_skips": "#8B5CF6",  # RGB + SPADE, Mid-Skips
-    "oem_only_seg_only": "#E9C46A",           # Seg, No SPADE
-    "oem_only_seg_only_spade": "#F28E2B",     # Seg + SPADE
+    "oem_only": "#68ACD6",
+    "oem_only_rgb_only_spade": "#5B6FC0",
+    "oem_only_rgb_only_spade_mid_skips": "#9C6ADE",
+    "oem_only_seg_only": "#E3B23C",
+    "oem_only_seg_only_spade": "#F28E2B",
 }
 
-
 MODEL_NAMES = {
-    "oem_only": "RGB, No SPADE",
+    "oem_only": "RGB",
     "oem_only_rgb_only_spade": "RGB + SPADE",
-    "oem_only_rgb_only_spade_mid_skips": "RGB + SPADE, Mid-Skips",
-    "oem_only_seg_only": "Seg, No SPADE",
+    "oem_only_rgb_only_spade_mid_skips": "RGB + SPADE (BN Only)",
+    "oem_only_seg_only": "Seg",
     "oem_only_seg_only_spade": "Seg + SPADE",
+}
+
+CLASS_NAMES = {
+    "bareland": "Bareland",
+    "rangeland": "Rangeland",
+    "developed_space": "Developed Space",
+    "road": "Road",
+    "trees": "Trees",
+    "water": "Water",
+    "agriculture_land": "Agriculture Land",
+    "buildings": "Buildings",
+}
+
+CLASS_LABELS = {
+    1: "bareland",
+    2: "rangeland",
+    3: "developed_space",
+    4: "road",
+    5: "trees",
+    6: "water",
+    7: "agriculture_land",
+    8: "buildings",
+}
+
+CLASS_COLORS = {
+    "bareland": "#ac4848",
+    "rangeland": "#7af289",
+    "developed_space": "#bebebe",
+    "road": "#e6e6e6",
+    "trees": "#519855",
+    "water": "#6191f2",
+    "agriculture_land": "#eac82b",
+    "buildings": "#f26161",
 }
 
 def apply_style():

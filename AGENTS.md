@@ -5,11 +5,13 @@ This repository uses a persistent project context file to preserve important dec
 architecture notes, and session outcomes across Codex conversations.
 
 ## Required startup behavior
-At the start of each task or conversation in this repository:
+At the start of each new conversation in this repository:
 
 1. Read `docs/PROJECT_CONTEXT.md` before planning or making changes.
 2. Treat it as the canonical persistent project summary unless the user explicitly overrides it.
 3. If the file is missing, create it using the template defined below.
+
+Do not read `docs/PROJECT_CONTEXT.md` for each new message, only at the beginning of a new conversation.
 
 ## Required update behavior
 Update `docs/PROJECT_CONTEXT.md` during the task only when one or more of the following occur:

@@ -214,6 +214,17 @@ SPADE functionality:
   - applies spatially adaptive modulation inside SPADE residual blocks using:
     - global AdaGN domain modulation from `d_emb`
     - spatial segmentation modulation from resized one-hot masks
+- As of 2026-05-06, `src/cyclenet/eval/thesis_plots/sweep_grid.py` can render a
+  single-source thesis CFG/noise-strength grid directly from a CycleNet
+  checkpoint, automatically using the segmentation-aware sampling path when the
+  checkpoint config requires it, can highlight a chosen operating point with a
+  configurable border, and can now export one sweep PDF per sample for a
+  consecutive batch of source images in a single run.
+- As of 2026-05-08, `src/cyclenet/eval/thesis_plots/selected_model_translation_grid.py`
+  builds a thesis comparison grid from `eval/thesis/selected_models.csv` by
+  sampling simulated source images once, then resolving the corresponding
+  translated image for each selected model from that row's `image_dir` using
+  sim-relative path matching with a unique filename-stem fallback.
 
 Default SPADE parameter:
 
@@ -412,12 +423,21 @@ Important interpretation:
   then loads those caches, computes per-class Fréchet distance to the `real`
   class features for `sim` and every selected model, and writes both absolute
   FD tables and delta-vs-sim CSVs for downstream thesis plotting.
+- As of 2026-05-06, the selected-model class-feature cache workflow supports
+  both `feature_extractor="deeplab"` and `feature_extractor="fid"`. DeepLab
+  keeps the existing `deeplab_class_features.npz` and `analysis/` defaults;
+  FID/Inception class features use mask-pooled `Mixed_7c` features by default,
+  cache to `fid_class_features.npz`, and write distance outputs under
+  `analysis_fid/` unless an output directory is configured explicitly.
 - As of 2026-05-03, `src/cyclenet/eval/thesis_plots/feature_distance.py`
   plots the thesis class-feature-distance analysis CSVs, currently as a
   class-wise delta-FD heatmap (model type by class, relative to sim) and a
   macro-averaged delta-FD bar chart by model type. It uses `MODEL_NAMES` and
   `MODEL_COLORS` from `src/cyclenet/eval/plotting/set_style.py` for consistent
-  paper-facing labels and colors.
+  paper-facing labels and colors. As of 2026-05-06, it can plot either
+  DeepLab or FID/Inception class-feature distance CSVs via `feature_extractor`;
+  FID plots infer `analysis_fid/` inputs and save with a `_fid` filename
+  suffix by default.
 - As of 2026-05-03, `src/cyclenet/eval/thesis_plots/boundary_edge_align.py`
   provides a thesis-oriented diagnostic plotter for the custom boundary-edge
   metric. Given paired simulated RGBs, simulated masks, and translated RGBs,
@@ -599,6 +619,14 @@ Important interpretation:
   translated images sometimes place class-specific real textures onto the
   wrong semantic regions, which can improve realism superficially while
   harming class correctness.
+- As of 2026-05-05, `src/cyclenet/eval/thesis_plots/results_table.py` should
+  report `BER` from `boundary_edge_inverse_ratio_*` rather than
+  `boundary_edge_ratio_*`, so the thesis results table matches the lower-is-
+  better boundary metric used in checkpoint selection.
+- As of 2026-05-08, `src/cyclenet/eval/thesis_plots/deeplab_miou.py` supports
+  `fid`, `deeplab_fd`, and `ber` as x-axis metrics for both single-panel and
+  multi-panel thesis figures. The multi-panel helper can render all three at
+  once, and BER uses tighter x-axis padding than the other metrics.
 - `project_translated.py` intentionally reuses cached sim/real reference
   manifests, embeddings, and fitted projectors. Translated embeddings are
   cached per embedding model under `data.out_dir` as

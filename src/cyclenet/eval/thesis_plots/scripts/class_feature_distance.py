@@ -10,8 +10,10 @@ import pandas as pd
 from cyclenet.eval.frechet_dist import frechet_distance
 from cyclenet.eval.plotting.set_style import MODEL_NAMES
 from cyclenet.eval.thesis_plots.scripts.cache_class_features import (
+    class_feature_cache_filename,
     load_class_embeddings,
     load_selected_models,
+    normalize_feature_extractor,
 )
 
 
@@ -40,8 +42,12 @@ def display_model_name(model_name: str) -> str:
     return display_name if display_name else model_name.replace("_", " ")
 
 
-def load_cached_dataset_features(cache_root: Path, dataset_rel_path: str) -> dict[int, np.ndarray]:
-    cache_path = cache_root / dataset_rel_path / "deeplab_class_features.npz"
+def load_cached_dataset_features(
+    cache_root: Path,
+    dataset_rel_path: str,
+    feature_extractor: str,
+) -> dict[int, np.ndarray]:
+    cache_path = cache_root / dataset_rel_path / class_feature_cache_filename(feature_extractor)
     if not cache_path.exists():
         raise FileNotFoundError(f"Missing cached class feature bundle: {cache_path}")
     return load_class_embeddings(cache_path)
@@ -172,21 +178,29 @@ def cache_class_feature_frechet_distances(
     selected_models_csv: str | Path,
     cache_dir: str | Path,
     out_dir: str | Path | None = None,
+    feature_extractor: str = "deeplab",
 ) -> Path:
     selected_df = load_selected_models(selected_models_csv)
     cache_dir = Path(cache_dir)
+    feature_extractor = normalize_feature_extractor(feature_extractor)
     if out_dir is None:
-        out_dir = cache_dir / "analysis"
+        out_dir = cache_dir / (
+            "analysis" if feature_extractor == "deeplab" else f"analysis_{feature_extractor}"
+        )
     out_dir = Path(out_dir)
 
     feats_by_dataset: dict[str, dict[int, np.ndarray]] = {
-        "real": load_cached_dataset_features(cache_dir, "real"),
-        "sim": load_cached_dataset_features(cache_dir, "sim"),
+        "real": load_cached_dataset_features(cache_dir, "real", feature_extractor),
+        "sim": load_cached_dataset_features(cache_dir, "sim", feature_extractor),
     }
 
     model_names = [str(model_name) for model_name in selected_df["model_name"].tolist()]
     for model_name in model_names:
-        feats_by_dataset[model_name] = load_cached_dataset_features(cache_dir / model_name, "translated")
+        feats_by_dataset[model_name] = load_cached_dataset_features(
+            cache_dir / model_name,
+            "translated",
+            feature_extractor,
+        )
 
     comparison_datasets = ["sim"] + model_names
     fd_rows = compute_reference_fd_rows(
@@ -216,6 +230,8 @@ def cache_class_feature_frechet_distances(
         "selected_models_csv": str(Path(selected_models_csv).resolve()),
         "cache_dir": str(cache_dir.resolve()),
         "out_dir": str(out_dir.resolve()),
+        "feature_extractor": feature_extractor,
+        "class_feature_cache_filename": class_feature_cache_filename(feature_extractor),
         "reference_dataset": "real",
         "baseline_dataset": "sim",
         "comparison_datasets": comparison_datasets,
@@ -242,21 +258,25 @@ def cache_class_feature_frechet_distances(
                 out_dir / model_name / "frechet_distance_delta_vs_sim_by_class.csv",
             )
 
-    print(f"Saved per-class Fréchet distance caches to {out_dir}")
+    print(f"Saved {feature_extractor} per-class Fréchet distance caches to {out_dir}")
     return out_dir
 
 
 def main() -> None:
     # CSV listing the selected models whose translated class-feature caches should be analyzed.
-    selected_models_csv = "eval/thesis/selected_models.csv"
+    selected_models_csv = "/develop/code/eval/thesis/selected_models.csv"
     # Root cache directory produced by `cache_class_features.py`.
     cache_dir = "/develop/code/eval/thesis/class_feature_cache"
+    # Feature extractor cache to analyze. Supported values: `deeplab` and `fid`.
+    feature_extractor = "deeplab"
     # Output directory for aggregated and per-model Fréchet-distance CSV caches.
-    out_dir = "/develop/code/eval/thesis/class_feature_cache/analysis"
+    # Use `None` for the extractor default: `analysis` for DeepLab, `analysis_fid` for FID.
+    out_dir = None
 
     saved_dir = cache_class_feature_frechet_distances(
         selected_models_csv=selected_models_csv,
         cache_dir=cache_dir,
+        feature_extractor=feature_extractor,
         out_dir=out_dir,
     )
     print(f"Saved class-feature distance analysis to {saved_dir}")

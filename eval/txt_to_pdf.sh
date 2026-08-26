@@ -39,7 +39,7 @@ find "$ROOT_DIR" -type f \( -iname "*.txt" \) | while IFS= read -r txt_file; do
     echo "  PDF: $pdf_file"
 
     # macOS base64 decode
-    base64 -D -i "$txt_file" -o "$pdf_file"
+    base64 -d "$txt_file" > "$pdf_file"
 done
 
 echo "Done."

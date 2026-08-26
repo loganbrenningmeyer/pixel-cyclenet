@@ -34,7 +34,6 @@ def _display_model_name(model_name: str) -> str:
     return display_name
 
 
-
 def _model_color(model_name: str) -> str:
     color = MODEL_COLORS.get(model_name, "")
     return color if color else COLORS["translated"]
@@ -76,13 +75,13 @@ def _load_selected_models(selected_models_csv: str | Path) -> pd.DataFrame:
 
 def _load_reference_cache(reference_cache_dir: str | Path) -> tuple[object, np.ndarray, np.ndarray]:
     cache_dir = Path(reference_cache_dir)
-    projector_path = cache_dir / "umap_projector.pkl"
-    sim_coords_path = cache_dir / "umap_sim_coords.npy"
-    real_coords_path = cache_dir / "umap_real_coords.npy"
+    projector_path = cache_dir / "pca_projector.pkl"
+    sim_coords_path = cache_dir / "pca_sim_coords.npy"
+    real_coords_path = cache_dir / "pca_real_coords.npy"
 
     for path in (projector_path, sim_coords_path, real_coords_path):
         if not path.exists():
-            raise FileNotFoundError(f"Required UMAP reference-cache file does not exist: {path}")
+            raise FileNotFoundError(f"Required PCA reference-cache file does not exist: {path}")
 
     with projector_path.open("rb") as f:
         projector = pickle.load(f)
@@ -109,7 +108,7 @@ def _compute_axis_limits(
     return (x_min - x_pad, x_max + x_pad), (y_min - y_pad, y_max + y_pad)
 
 
-def plot_deeplab_umap_selected_row(
+def plot_deeplab_pca_selected_row(
     selected_models_csv: str | Path,
     reference_cache_dir: str | Path,
     save_path: str | Path,
@@ -117,24 +116,17 @@ def plot_deeplab_umap_selected_row(
     max_translated_points: int | None = None,
     random_seed: int = 42,
     show_centroid: bool = True,
-    show_reference_centroids: bool = False,
     model_title_fontsize: float = 16.0,
     axis_label_fontsize: float = 14.0,
     legend_fontsize: float = 14.0,
     rasterized: bool = False,
     reference_size: int = 16,
     translated_size: int = 20,
-    centroid_size: int = 48,
-    centroid_marker: str = "o",
-    reference_centroid_size: int = 48,
-    reference_centroid_marker: str = "x",
     reference_alpha: float = 0.3,
     translated_alpha: float = 0.45,
 ) -> Path:
     selected_df = _load_selected_models(selected_models_csv)
     projector, sim_coords, real_coords = _load_reference_cache(reference_cache_dir)
-    sim_centroid = sim_coords.mean(axis=0)
-    real_centroid = real_coords.mean(axis=0)
 
     translated_rows: list[dict[str, object]] = []
     for row_idx, row in selected_df.iterrows():
@@ -179,6 +171,9 @@ def plot_deeplab_umap_selected_row(
     for idx, (entry, ax) in enumerate(zip(translated_rows, axes_row, strict=True)):
         row = entry["row"]
         translated_coords = np.asarray(entry["coords"], dtype=float)
+        step = int(row["checkpoint"])
+        noise_strength = float(row["noise_strength"])
+        cfg_weight = float(row["cfg_weight"])
         model_name = str(row["model_name"])
         model_color = _model_color(model_name)
 
@@ -226,42 +221,18 @@ def plot_deeplab_umap_selected_row(
             zorder=2,
         )
 
-        if show_reference_centroids:
-            ax.scatter(
-                [sim_centroid[0]],
-                [sim_centroid[1]],
-                s=reference_centroid_size,
-                marker=reference_centroid_marker,
-                color=COLORS["sim"],
-                facecolors=COLORS["sim"],
-                edgecolors="black",
-                linewidths=1.0,
-                zorder=3,
-            )
-            ax.scatter(
-                [real_centroid[0]],
-                [real_centroid[1]],
-                s=reference_centroid_size,
-                marker=reference_centroid_marker,
-                color=COLORS["real"],
-                facecolors="white",
-                edgecolors="black",
-                linewidths=1.0,
-                zorder=3,
-            )
-
         if show_centroid:
             centroid = translated_coords.mean(axis=0)
             ax.scatter(
                 [centroid[0]],
                 [centroid[1]],
-                s=centroid_size,
-                marker=centroid_marker,
+                s=48,
+                marker="o",
                 color=model_color,
                 facecolors=model_color,
                 edgecolors="black",
                 linewidths=1.0,
-                zorder=4,
+                zorder=3,
             )
 
         ax.set_title(_display_model_name(model_name), fontsize=model_title_fontsize)
@@ -272,10 +243,10 @@ def plot_deeplab_umap_selected_row(
         ax.set_yticks([])
         ax.set_box_aspect(1.0)
         if idx == 0:
-            ax.set_ylabel("UMAP 2", fontsize=axis_label_fontsize)
-        ax.set_xlabel("UMAP 1", fontsize=axis_label_fontsize)
+            ax.set_ylabel("PCA 2", fontsize=axis_label_fontsize)
+        ax.set_xlabel("PCA 1", fontsize=axis_label_fontsize)
 
-    embedding_handles = [
+    handles = [
         mlines.Line2D(
             [],
             [],
@@ -306,64 +277,27 @@ def plot_deeplab_umap_selected_row(
             label="Translated embeddings",
         ),
     ]
-    centroid_handles: list[mlines.Line2D] = []
-    if show_reference_centroids:
-        centroid_handles.extend(
-            [
-                mlines.Line2D(
-                    [],
-                    [],
-                    color=COLORS["sim"],
-                    markerfacecolor=COLORS["sim"],
-                    markeredgecolor="black",
-                    marker=reference_centroid_marker,
-                    linestyle="None",
-                    markersize=7.5,
-                    label="Sim centroid",
-                ),
-                mlines.Line2D(
-                    [],
-                    [],
-                    color=COLORS["real"],
-                    markerfacecolor="white",
-                    markeredgecolor="black",
-                    marker=reference_centroid_marker,
-                    linestyle="None",
-                    markersize=7.5,
-                    label="Real centroid",
-                ),
-            ]
-        )
     if show_centroid:
-        centroid_handles.append(
+        handles.append(
             mlines.Line2D(
                 [],
                 [],
                 color=COLORS["translated"],
-                marker=centroid_marker,
+                marker="o",
                 markerfacecolor="#dddddd",
                 markeredgecolor="black",
                 linestyle="None",
-                markersize=7.5,
+                markersize=6.5,
                 label="Translated centroid",
             )
         )
 
-    if show_reference_centroids and show_centroid and len(centroid_handles) == 3:
-        handles = [
-            embedding_handles[0], centroid_handles[0],
-            embedding_handles[1], centroid_handles[1],
-            embedding_handles[2], centroid_handles[2],
-        ]
-    else:
-        handles = embedding_handles + centroid_handles
-
     fig.legend(
         handles=handles,
         loc="upper center",
-        ncol=3,
+        ncol=4,
         frameon=True,
-        bbox_to_anchor=(0.5, 1.18),
+        bbox_to_anchor=(0.5, 1.15),
         fontsize=legend_fontsize,
     )
 
@@ -378,45 +312,35 @@ def plot_deeplab_umap_selected_row(
 def main() -> None:
     # CSV listing the selected thesis models and their chosen checkpoint / CFG / gamma settings.
     selected_models_csv = "/develop/code/eval/thesis/selected_models.csv"
-    # DeepLab reference-cache directory containing `umap_projector.pkl`,
-    # `umap_sim_coords.npy`, and `umap_real_coords.npy`.
+    # DeepLab reference-cache directory containing `pca_projector.pkl`,
+    # `pca_sim_coords.npy`, and `pca_real_coords.npy`.
     reference_cache_dir = "/develop/code/eval/thesis/reference_cache/deeplab"
     # Output path for the thesis row figure.
-    save_path = "/develop/code/eval/thesis/umap/deeplab_selected_models_umap_row.pdf"
+    save_path = "/develop/code/eval/thesis/pca/deeplab_selected_models_pca_row.pdf"
     # Optional cap on plotted sim/real reference points per panel.
-    max_reference_points = 300
+    max_reference_points = 150
     # Optional cap on plotted translated points per model panel. Use `None` for all points.
-    max_translated_points = 300
+    max_translated_points = 150
     # Random seed used for point subsampling when max-point caps are active.
     random_seed = 42
     # Whether to draw a highlighted centroid marker for each translated cloud.
     show_centroid = True
-    # Whether to draw sim/real reference centroids in each panel.
-    show_reference_centroids = True
     # Font size for each model-name subplot title.
-    model_title_fontsize = 24.0
+    model_title_fontsize = 18.0
     # Font size for the x/y-axis labels.
-    axis_label_fontsize = 20.0
+    axis_label_fontsize = 16.0
     # Font size for the legend labels.
-    legend_fontsize = 20.0
+    legend_fontsize = 16.0
     # Rasterize points
     rasterized = False
     # Sim/real + translated point size
-    reference_size = 16
-    translated_size = 20
-    # Translated centroid point size
-    centroid_size = 72
-    # Marker used for translated centroids.
-    centroid_marker = "o"
-    # Sim/real centroid point size.
-    reference_centroid_size = 72
-    # Marker used for sim/real centroids.
-    reference_centroid_marker = "X"
+    reference_size = 20
+    translated_size = 28
     # Sim/real + translated point transparency
     reference_alpha = 0.3
     translated_alpha = 0.45
 
-    saved_path = plot_deeplab_umap_selected_row(
+    saved_path = plot_deeplab_pca_selected_row(
         selected_models_csv=selected_models_csv,
         reference_cache_dir=reference_cache_dir,
         save_path=save_path,
@@ -424,21 +348,16 @@ def main() -> None:
         max_translated_points=max_translated_points,
         random_seed=random_seed,
         show_centroid=show_centroid,
-        show_reference_centroids=show_reference_centroids,
         model_title_fontsize=model_title_fontsize,
         axis_label_fontsize=axis_label_fontsize,
         legend_fontsize=legend_fontsize,
         rasterized=rasterized,
         reference_size=reference_size,
         translated_size=translated_size,
-        centroid_size=centroid_size,
-        centroid_marker=centroid_marker,
-        reference_centroid_size=reference_centroid_size,
-        reference_centroid_marker=reference_centroid_marker,
         reference_alpha=reference_alpha,
         translated_alpha=translated_alpha,
     )
-    print(f"Saved UMAP row plot to {saved_path}")
+    print(f"Saved PCA row plot to {saved_path}")
 
 
 if __name__ == "__main__":

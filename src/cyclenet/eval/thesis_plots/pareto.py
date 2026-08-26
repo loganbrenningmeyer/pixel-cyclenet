@@ -36,7 +36,10 @@ ANNOTATION_BBOX = {
 
 def _display_model_name(model_name: str) -> str:
     display_name = MODEL_NAMES.get(model_name, "")
-    return display_name if display_name else model_name.replace("_", " ")
+    display_name = display_name if display_name else model_name.replace("_", " ")
+    if display_name == "RGB + SPADE (BN Only)":
+        return "RGB + SPADE\n(BN Only)"
+    return display_name
 
 
 def _model_color(model_name: str) -> str:
@@ -224,8 +227,18 @@ def _build_knee_geometry(
     }
 
 
-def _format_selected_annotation(row: pd.Series) -> str:
-    return f"$s={float(row['noise_strength']):g}$\n$w={float(row['cfg_weight']):g}$"
+def _format_checkpoint_annotation(step: int | float | str) -> str:
+    return f"$c = {int(float(step) / 1000):d}\\mathrm{{k}}$"
+
+
+def _format_selected_annotation(row: pd.Series, include_checkpoint: bool = False) -> str:
+    lines = [
+        f"$s={float(row['noise_strength']):g}$",
+        f"$w={float(row['cfg_weight']):g}$",
+    ]
+    if include_checkpoint:
+        lines.insert(0, _format_checkpoint_annotation(row["step"]))
+    return "\n".join(lines)
 
 
 def _draw_selected_annotation(
@@ -234,13 +247,14 @@ def _draw_selected_annotation(
     y: float,
     text: str,
     xytext: tuple[float, float],
+    annotation_fontsize: float,
 ) -> None:
     ax.annotate(
         text,
         (x, y),
         xytext=xytext,
         textcoords="offset points",
-        fontsize=10,
+        fontsize=annotation_fontsize,
         bbox=ANNOTATION_BBOX,
         arrowprops={
             "arrowstyle": "-",
@@ -323,6 +337,9 @@ def _draw_raw_pareto_panel(
     annotate_selected: bool,
     xlim: tuple[float, float],
     ylim: tuple[float, float],
+    title_fontsize: float,
+    tick_label_fontsize: float,
+    annotation_fontsize: float,
     show_title: bool = True,
 ) -> None:
     model_color = _model_color(model_name)
@@ -385,13 +402,15 @@ def _draw_raw_pareto_panel(
                     y=float(row[y_col]),
                     text=_format_selected_annotation(row),
                     xytext=(12, 8),
+                    annotation_fontsize=annotation_fontsize,
                 )
 
     if show_title:
-        ax.set_title(_display_model_name(model_name), fontsize=12.5)
+        ax.set_title(_display_model_name(model_name), fontsize=title_fontsize)
     ax.grid(alpha=0.25)
     ax.set_xlim(*xlim)
     ax.set_ylim(*ylim)
+    ax.tick_params(axis="both", labelsize=tick_label_fontsize)
 
 
 def _draw_normalized_knee_panel(
@@ -400,6 +419,11 @@ def _draw_normalized_knee_panel(
     geometry: dict[str, object],
     annotate_selected: bool,
     annotate_chord: bool,
+    include_checkpoint_in_annotation: bool,
+    title_fontsize: float,
+    tick_label_fontsize: float,
+    annotation_fontsize: float,
+    chord_label_fontsize: float,
     show_title: bool = True,
 ) -> None:
     model_color = _model_color(model_name)
@@ -483,25 +507,36 @@ def _draw_normalized_knee_panel(
             (start[0], start[1]),
             xytext=(4, -12),
             textcoords="offset points",
-            fontsize=7,
+            fontsize=chord_label_fontsize,
         )
-        ax.annotate("end", (end[0], end[1]), xytext=(4, -12), textcoords="offset points", fontsize=7)
+        ax.annotate(
+            "end",
+            (end[0], end[1]),
+            xytext=(4, -12),
+            textcoords="offset points",
+            fontsize=chord_label_fontsize,
+        )
 
     if annotate_selected:
         _draw_selected_annotation(
             ax=ax,
             x=float(selected_point[0]),
             y=float(selected_point[1]),
-            text=_format_selected_annotation(selected_row),
+            text=_format_selected_annotation(
+                selected_row,
+                include_checkpoint=include_checkpoint_in_annotation,
+            ),
             xytext=(32, 6),
+            annotation_fontsize=annotation_fontsize,
         )
 
     if show_title:
-        ax.set_title(_display_model_name(model_name), fontsize=12.5)
+        ax.set_title(_display_model_name(model_name), fontsize=title_fontsize)
     ax.grid(alpha=0.25)
     ax.set_xlim(-0.08, 1.08)
     ax.set_ylim(-0.08, 1.08)
     ax.set_aspect("equal", adjustable="box")
+    ax.tick_params(axis="both", labelsize=tick_label_fontsize)
 
 
 def plot_deeplab_boundary_pareto_row(
@@ -511,6 +546,11 @@ def plot_deeplab_boundary_pareto_row(
     title: str | None = None,
     annotate_selected: bool = False,
     clip_quantile: float | None = None,
+    model_title_fontsize: float = 16.0,
+    axis_label_fontsize: float = 12.0,
+    tick_label_fontsize: float = 11.0,
+    legend_fontsize: float = 11.0,
+    selected_annotation_fontsize: float = 10.0,
 ) -> Path:
     spec = get_selection_mode_spec(selection_mode)
     selected_col = str(spec["selected_col"])
@@ -551,10 +591,13 @@ def plot_deeplab_boundary_pareto_row(
             annotate_selected=annotate_selected,
             xlim=xlim,
             ylim=ylim,
+            title_fontsize=model_title_fontsize,
+            tick_label_fontsize=tick_label_fontsize,
+            annotation_fontsize=selected_annotation_fontsize,
         )
         if idx == 0:
-            ax.set_ylabel(f"{METRIC_LABELS[y_col]} ($\\downarrow$)")
-        ax.set_xlabel(f"{METRIC_LABELS[x_col]} ($\\downarrow$)")
+            ax.set_ylabel(f"{METRIC_LABELS[y_col]} ($\\downarrow$)", fontsize=axis_label_fontsize)
+        ax.set_xlabel(f"{METRIC_LABELS[x_col]} ($\\downarrow$)", fontsize=axis_label_fontsize)
 
     handles = [
         mlines.Line2D(
@@ -587,14 +630,13 @@ def plot_deeplab_boundary_pareto_row(
         loc="upper center",
         ncol=min(len(handles), 4),
         frameon=True,
-        bbox_to_anchor=(0.5, 1.04),
+        bbox_to_anchor=(0.5, 1.01),
+        fontsize=legend_fontsize,
     )
-    figure_title = title if title is not None else str(spec["display_title"])
-    fig.suptitle(figure_title, y=1.08, fontsize=14.0)
 
     save_path = Path(save_path)
     save_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.tight_layout(rect=(0.0, 0.0, 1.0, 0.92))
+    fig.tight_layout(rect=(0.0, 0.0, 1.0, 0.95))
     fig.savefig(save_path)
     plt.close(fig)
     return save_path
@@ -607,6 +649,13 @@ def plot_deeplab_boundary_pareto_knee_normalized_row(
     title: str | None = None,
     annotate_selected: bool = False,
     annotate_chord: bool = False,
+    annotate_checkpoint: bool = False,
+    model_title_fontsize: float = 12.5,
+    axis_label_fontsize: float = 12.0,
+    tick_label_fontsize: float = 11.0,
+    legend_fontsize: float = 11.0,
+    selected_annotation_fontsize: float = 10.0,
+    chord_label_fontsize: float = 7.0,
 ) -> Path:
     spec = get_selection_mode_spec(selection_mode)
     analysis_spec = get_analysis_selection_mode_spec(selection_mode)
@@ -664,10 +713,15 @@ def plot_deeplab_boundary_pareto_knee_normalized_row(
             geometry=geometry,
             annotate_selected=annotate_selected,
             annotate_chord=annotate_chord,
+            include_checkpoint_in_annotation=annotate_checkpoint,
+            title_fontsize=model_title_fontsize,
+            tick_label_fontsize=tick_label_fontsize,
+            annotation_fontsize=selected_annotation_fontsize,
+            chord_label_fontsize=chord_label_fontsize,
         )
         if idx == 0:
-            ax.set_ylabel(y_label)
-        ax.set_xlabel(x_label)
+            ax.set_ylabel(y_label, fontsize=axis_label_fontsize)
+        ax.set_xlabel(x_label, fontsize=axis_label_fontsize)
 
     handles = _normalized_handles()
     handles.extend(_checkpoint_marker_handles())
@@ -677,14 +731,13 @@ def plot_deeplab_boundary_pareto_knee_normalized_row(
         loc="upper center",
         ncol=4,
         frameon=True,
-        bbox_to_anchor=(0.5, 1.05),
+        bbox_to_anchor=(0.5, 1.01),
+        fontsize=legend_fontsize,
     )
-    figure_title = title if title is not None else f"{spec['display_title']} (Normalized Knee Geometry)"
-    fig.suptitle(figure_title, y=1.10, fontsize=14.0)
 
     save_path = Path(save_path)
     save_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.tight_layout(rect=(0.0, 0.0, 1.0, 0.90))
+    fig.tight_layout(rect=(0.0, 0.0, 1.0, 0.95))
     fig.savefig(save_path)
     plt.close(fig)
     return save_path
@@ -697,7 +750,16 @@ def plot_deeplab_boundary_pareto_two_row(
     title: str | None = None,
     annotate_normalized: bool = False,
     annotate_chord: bool = False,
+    annotate_checkpoint: bool = False,
     clip_quantile: float | None = None,
+    raw_model_title_fontsize: float = 16.0,
+    normalized_model_title_fontsize: float = 12.5,
+    row_header_fontsize: float = 16.0,
+    axis_label_fontsize: float = 12.0,
+    tick_label_fontsize: float = 11.0,
+    legend_fontsize: float = 11.0,
+    selected_annotation_fontsize: float = 10.0,
+    chord_label_fontsize: float = 7.0,
 ) -> Path:
     spec = get_selection_mode_spec(selection_mode)
     analysis_spec = get_analysis_selection_mode_spec(selection_mode)
@@ -739,7 +801,7 @@ def plot_deeplab_boundary_pareto_two_row(
         )
 
     n_models = len(model_geometries)
-    row_label_x = 0.09
+    row_label_x = 0.08
     content_center_x = 0.5 * (row_label_x + 1.0)
     fig, axes = plt.subplots(
         2,
@@ -762,6 +824,9 @@ def plot_deeplab_boundary_pareto_two_row(
             annotate_selected=False,
             xlim=xlim,
             ylim=ylim,
+            title_fontsize=raw_model_title_fontsize,
+            tick_label_fontsize=tick_label_fontsize,
+            annotation_fontsize=selected_annotation_fontsize,
             show_title=True,
         )
         _draw_normalized_knee_panel(
@@ -770,14 +835,25 @@ def plot_deeplab_boundary_pareto_two_row(
             geometry=geometry,
             annotate_selected=annotate_normalized,
             annotate_chord=annotate_chord,
+            include_checkpoint_in_annotation=annotate_checkpoint,
+            title_fontsize=normalized_model_title_fontsize,
+            tick_label_fontsize=tick_label_fontsize,
+            annotation_fontsize=selected_annotation_fontsize,
+            chord_label_fontsize=chord_label_fontsize,
             show_title=False,
         )
 
         if idx == 0:
-            top_ax.set_ylabel(f"{METRIC_LABELS[y_col]} ($\\downarrow$)")
-            bottom_ax.set_ylabel(f"Normalized {METRIC_LABELS.get(metric_cols[1], metric_cols[1])}")
-        top_ax.set_xlabel(f"{METRIC_LABELS[x_col]} ($\\downarrow$)")
-        bottom_ax.set_xlabel(f"Normalized {METRIC_LABELS.get(metric_cols[0], metric_cols[0])}")
+            top_ax.set_ylabel(f"{METRIC_LABELS[y_col]} ($\\downarrow$)", fontsize=axis_label_fontsize)
+            bottom_ax.set_ylabel(
+                f"Normalized {METRIC_LABELS.get(metric_cols[1], metric_cols[1])}",
+                fontsize=axis_label_fontsize,
+            )
+        top_ax.set_xlabel(f"{METRIC_LABELS[x_col]} ($\\downarrow$)", fontsize=axis_label_fontsize)
+        bottom_ax.set_xlabel(
+            f"Normalized {METRIC_LABELS.get(metric_cols[0], metric_cols[0])}",
+            fontsize=axis_label_fontsize,
+        )
 
     handles = [
         mlines.Line2D(
@@ -809,15 +885,14 @@ def plot_deeplab_boundary_pareto_two_row(
         loc="upper center",
         ncol=min(len(handles), 4),
         frameon=True,
-        bbox_to_anchor=(content_center_x, 1.02),
+        bbox_to_anchor=(content_center_x, 1.08),
         bbox_transform=fig.transFigure,
+        fontsize=legend_fontsize,
     )
-    figure_title = title if title is not None else f"{spec['display_title']} (Selection Overview)"
-    fig.suptitle(figure_title, x=content_center_x, y=1.06, ha="center", fontsize=14.0)
 
     save_path = Path(save_path)
     save_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.tight_layout(rect=(0.12, 0.0, 1.0, 0.95))
+    fig.tight_layout(rect=(0.12, 0.0, 1.0, 0.96))
 
     top_bbox = axes[0, 0].get_position()
     bottom_bbox = axes[1, 0].get_position()
@@ -827,7 +902,7 @@ def plot_deeplab_boundary_pareto_two_row(
         "Pareto\nTradeoff",
         ha="center",
         va="center",
-        fontsize=14,
+        fontsize=row_header_fontsize,
         fontweight="semibold",
     )
     fig.text(
@@ -836,7 +911,7 @@ def plot_deeplab_boundary_pareto_two_row(
         "Knee\nSelection",
         ha="center",
         va="center",
-        fontsize=14,
+        fontsize=row_header_fontsize,
         fontweight="semibold",
     )
 
@@ -872,11 +947,29 @@ def main() -> None:
     # Whether to annotate each selected point with gamma / CFG text.
     annotate_pareto = False
     annotate_normalized = True
-
+    # Whether selected-point annotations should also include checkpoint text
+    # like `$c = 10\\mathrm{k}$`.
+    annotate_checkpoint = True
     annotate_chord = False
     # Optional display-only quantile clip for shared axis limits. Use `None`
     # to show the full range, or e.g. `0.99` to suppress extreme outliers.
     clip_quantile = 0.99
+    # Font size for model-name subplot titles in the raw Pareto row.
+    raw_model_title_fontsize = 18.0
+    # Font size for model-name subplot titles in the normalized knee row.
+    normalized_model_title_fontsize = 12.5
+    # Font size for x/y-axis labels across Pareto figures.
+    axis_label_fontsize = 16.0
+    # Font size for numeric x/y tick labels across Pareto figures.
+    tick_label_fontsize = 12.0
+    # Font size for legend labels across Pareto figures.
+    legend_fontsize = 16.0
+    # Font size for selected-point annotation text.
+    selected_annotation_fontsize = 12.0
+    # Font size for optional normalized-chord start/end labels.
+    chord_label_fontsize = 7.0
+    # Font size for the two-row figure's left-side row headers.
+    row_header_fontsize = 20.0
 
     saved_path = plot_deeplab_boundary_pareto_row(
         model_metrics=model_metrics,
@@ -885,6 +978,11 @@ def main() -> None:
         title=title,
         annotate_selected=annotate_pareto,
         clip_quantile=clip_quantile,
+        model_title_fontsize=raw_model_title_fontsize,
+        axis_label_fontsize=axis_label_fontsize,
+        tick_label_fontsize=tick_label_fontsize,
+        legend_fontsize=legend_fontsize,
+        selected_annotation_fontsize=selected_annotation_fontsize,
     )
     normalized_saved_path = plot_deeplab_boundary_pareto_knee_normalized_row(
         model_metrics=model_metrics,
@@ -893,6 +991,13 @@ def main() -> None:
         title=title,
         annotate_selected=annotate_normalized,
         annotate_chord=annotate_chord,
+        annotate_checkpoint=annotate_checkpoint,
+        model_title_fontsize=normalized_model_title_fontsize,
+        axis_label_fontsize=axis_label_fontsize,
+        tick_label_fontsize=tick_label_fontsize,
+        legend_fontsize=legend_fontsize,
+        selected_annotation_fontsize=selected_annotation_fontsize,
+        chord_label_fontsize=chord_label_fontsize,
     )
     two_row_saved_path = plot_deeplab_boundary_pareto_two_row(
         model_metrics=model_metrics,
@@ -901,7 +1006,16 @@ def main() -> None:
         title=title,
         annotate_normalized=annotate_normalized,
         annotate_chord=annotate_chord,
+        annotate_checkpoint=annotate_checkpoint,
         clip_quantile=clip_quantile,
+        raw_model_title_fontsize=raw_model_title_fontsize,
+        normalized_model_title_fontsize=normalized_model_title_fontsize,
+        row_header_fontsize=row_header_fontsize,
+        axis_label_fontsize=axis_label_fontsize,
+        tick_label_fontsize=tick_label_fontsize,
+        legend_fontsize=legend_fontsize,
+        selected_annotation_fontsize=selected_annotation_fontsize,
+        chord_label_fontsize=chord_label_fontsize,
     )
     print(f"Saved Pareto row plot to {saved_path}")
     print(f"Saved normalized knee plot to {normalized_saved_path}")
